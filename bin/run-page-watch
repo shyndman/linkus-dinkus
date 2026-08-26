@@ -1,0 +1,7 @@
+#!/usr/bin/env sh
+set -eu
+
+project_directory=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+PATH="$HOME/.local/bin:$HOME/.local/share/pnpm:/home/linuxbrew/.linuxbrew/bin:$PATH"
+export PATH
+exec pnpm exec tsx "$project_directory/scripts/run-page-watch.ts"
