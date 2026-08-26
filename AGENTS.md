@@ -1,109 +1,59 @@
-# Page-watch instructions
-
-Spreadsheet ID: `1885pAekZfP__9yGRXhCJU5_N8jAzoXUi6IyHaPf149E`
+# Page-watch agent instructions
 
 Run all commands from the project root. Use pnpm for JavaScript dependencies.
 
-## Spreadsheet input
+The prompt assigns one role: extractor agent or change judge. Do only the assigned role.
 
-Read these named ranges with the Google Sheets batch-read tool:
+## Extractor agent
 
-- `notificationTrigger`
-- `pollFrequency`
-- `urls`
+The extractor agent makes sure that one saved extractor converts a supplied HTML snapshot into the requested data.
 
-Immediately after the spreadsheet read succeeds:
+The prompt supplies:
 
-1. Run `date --iso-8601=seconds` on the host machine.
-2. Write the command output to the `lastCheckDateTime` named range with the Google Sheets write-cells tool.
+- One URL
+- One cache directory
+- One current HTML snapshot
+- The notification trigger, which identifies data that the extractor must preserve
+- A setup or audit reason
 
-Treat the spreadsheet as the current configuration. Do not poll a URL that is absent from `urls`.
+Do not evaluate a change against the notification trigger. Do not send notifications.
 
-## Poll frequency
+### Setup task
 
-Interpret the natural-language `pollFrequency` value. Produce one or more cron expressions.
-
-Pass each expression as one quoted command argument:
-
-```sh
-bin/check-poll-frequency '*/20 * * * * 1-5'
-```
-
-For a schedule that needs multiple expressions, pass multiple arguments:
-
-```sh
-bin/check-poll-frequency \
-  '0,30 9-16 * * 1-5' \
-  '0 17 * * 1-5'
-```
-
-The agent interprets `pollFrequency`. The command only compares strings. It does not parse or validate cron expressions.
-
-The command stores one expression per line in `cache/poll-frequency.txt`. It returns one of these states:
-
-- `initialized`: The command wrote the first expressions.
-- `unchanged`: The expressions match the cache.
-- `changed`: The result contains `previous` and `desired` expression arrays. The command does not replace the cache.
-
-The future schedule-update script will let cron validate the expressions. Until that script exists, log changed expressions and stop the run.
-
-## URL state
-
-For each current URL, run:
-
-```sh
-bin/url-state "$url"
-```
-
-The command returns the cache directory and one state:
-
-- `new`: The cache directory does not exist.
-- `incomplete`: The directory exists without an executable `extract` file.
-- `configured`: The directory contains an executable `extract` file.
-
-Use the new-URL procedure for `new` and `incomplete`. Use the known-URL procedure for `configured`.
-
-## New-URL procedure
-
-1. Capture the rendered Document Object Model (DOM). This command opens the URL in Camoufox.
-
-   ```sh
-   snapshot=$(bin/capture-page "$url")
-   ```
-
-2. Inspect the rendered page.
+1. Inspect the rendered page.
 
    ```sh
    bin/camou snapshot -i
    ```
 
-3. Record the visible items, names, counts, and direct links as extraction expectations.
-4. Create a draft Markdown file with Defuddle.
+2. Record the visible items, names, counts, and direct links as extraction expectations.
+3. Create a draft Markdown file with Defuddle.
 
    ```sh
-   draft=$(bin/defuddle-snapshot "$snapshot")
+   bin/defuddle-snapshot "$snapshot"
    ```
 
-5. Compare the draft with the rendered-page expectations.
-6. Inspect the HTML when the draft loses required content or relationships.
-7. Create `cache/<url-slug>/extract` and its typed source file.
-8. Run the extractor through the canonical runner.
+4. Compare the draft with the extraction expectations.
+5. Inspect the supplied HTML when the draft loses required content or relationships.
+6. Create `cache/<url-slug>/extract` and its typed source file.
+7. Run the extractor through the canonical runner.
 
    ```sh
-   canonical=$(bin/extract-snapshot "$snapshot")
+   bin/extract-snapshot "$snapshot"
    ```
 
-9. Compare the canonical Markdown with every extraction expectation.
-10. Do not accept the baseline until the canonical Markdown contains all required data.
-11. Record the baseline state.
+8. Compare the canonical Markdown with every extraction expectation.
+9. Finish only when the canonical Markdown contains all required data.
 
-   ```sh
-   bin/compare-snapshots "$(dirname "$snapshot")"
-   ```
+### Audit task
 
-The comparison command must return `baseline` for the first canonical snapshot.
+1. Inspect the supplied HTML and the saved extractor.
+2. Run the saved extractor against the supplied HTML.
+3. Compare the output with the data in the HTML.
+4. If the extractor is wrong, fix it and test it again.
+5. If the extractor is correct, do not change it.
 
-## Extractor contract
+### Extractor contract
 
 The fixed extractor path is `cache/<url-slug>/extract`.
 
@@ -122,65 +72,56 @@ The extractor must obey these rules:
 - Return a nonzero status after a failure.
 - Return identical output for identical input.
 - Exclude timestamps and run-specific values from the Markdown.
-- Preserve data required by `notificationTrigger`.
+- Preserve data required by the notification trigger.
 
-Use Cheerio for HTML inspection and repair. Use `bin/defuddle` for Markdown extraction when its output is useful.
+Use Cheerio for HTML inspection and repair. Use `bin/defuddle` when its Markdown output is useful.
 
 The executable `extract` file can call a typed TypeScript source file through `pnpm exec tsx`.
 
-## Known-URL procedure
+## Change judge
 
-1. Capture a new rendered DOM snapshot.
+The change judge decides whether one supplied Markdown difference matches the supplied notification trigger.
 
-   ```sh
-   snapshot=$(bin/capture-page "$url")
-   ```
+The prompt supplies:
 
-2. Run the saved extractor.
+- One URL
+- One cache directory
+- One current HTML snapshot
+- One notification trigger
+- The previous and current canonical Markdown paths
+- Their Markdown difference
 
-   ```sh
-   canonical=$(bin/extract-snapshot "$snapshot")
-   ```
+Do not edit the extractor or a snapshot.
 
-3. Compare the two newest canonical snapshots.
+1. Evaluate only the supplied Markdown difference against the notification trigger.
+2. If the difference does not match the trigger, finish without a notification.
+3. If the difference matches the trigger, identify each added job.
+4. For each added job without a direct link, inspect the current HTML snapshot.
+5. Examine the matching element, attributes, nearby anchors, embedded data, and event metadata for a URL.
+6. Resolve a relative URL against the watched page URL.
+7. Call `notify` with a description of the change.
+8. Include each added job name and each recovered direct link.
+9. If URL recovery fails, call `notify` without a link.
 
-   ```sh
-   comparison=$(bin/compare-snapshots "$(dirname "$snapshot")")
-   ```
-
-4. If the state is `unchanged`, finish this URL without an agent review.
-5. If the state is `changed`, evaluate only the reported difference against `notificationTrigger`.
-6. If the difference matches the trigger, identify each added job.
-7. For each added job without a direct link, inspect the current HTML snapshot.
-8. Examine the matching job element, attributes, nearby anchors, embedded data, and event metadata for a URL.
-9. Resolve a relative URL against the watched page URL.
-10. Call `notify` with a description of what changed.
-    Include each added job name and each recovered direct link.
-11. If URL recovery fails, call `notify` without a link.
-12. Use URL recovery only for notification content. Do not change the canonical artifact.
-13. If the difference does not match the trigger, finish this URL without a notification.
-
+Use URL recovery only for notification content. Do not change the canonical Markdown.
 
 ## Cache layout
 
 ```text
 cache/
-├── poll-frequency.json
 └── <url-slug>/
     ├── extract
     ├── extract.ts
     ├── snapshot-<UTC timestamp>.html
     ├── snapshot-<UTC timestamp>.draft.md
-    └── snapshot-<UTC timestamp>.md
+    ├── snapshot-<UTC timestamp>.md
+    └── failure-state.json
 ```
 
 HTML snapshots are immutable evidence. Draft Markdown is inspection output. Markdown without `.draft` is canonical comparison data.
 
 ## Installed commands
 
-- `bin/check-poll-frequency <value>`: Canonicalize and compare the poll frequency.
-- `bin/url-state <url>`: Classify a URL cache.
-- `bin/capture-page <url>`: Open the URL and save rendered HTML.
 - `bin/defuddle-snapshot <snapshot.html>`: Create draft Markdown.
 - `bin/extract-snapshot <snapshot.html>`: Run the saved extractor and create canonical Markdown.
 - `bin/compare-snapshots <cache-directory>`: Compare the two newest canonical Markdown files.
