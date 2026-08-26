@@ -4,9 +4,11 @@
   "type": "module",
   "packageManager": "pnpm@11.24.0",
   "dependencies": {
+    "@modelcontextprotocol/client": "2.0.0",
     "cheerio": "1.2.0",
     "dotenv": "17.4.2",
-    "gramio": "0.14.0"
+    "gramio": "0.14.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "24.13.3",

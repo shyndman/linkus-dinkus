@@ -1,37 +1,10 @@
-import { fileURLToPath } from "node:url";
-import { config } from "dotenv";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
-import { Bot } from "gramio";
+import { createTelegramNotifier } from "../../scripts/telegram.ts";
 
-const PROJECT_ENV_PATH = fileURLToPath(new URL("../../.env", import.meta.url));
-config({ path: PROJECT_ENV_PATH, quiet: true });
-
-type TelegramEnvironmentName = "TELEGRAM_BOT_TOKEN" | "TELEGRAM_CHAT_ID";
-
-function requireTelegramEnvironment(name: TelegramEnvironmentName): string {
-  const value = process.env[name];
-  if (value) return value;
-  console.error(`notify: missing ${name}`);
-  throw new Error(`Missing required environment variable: ${name}`);
-}
-
-async function sendTelegramNotification(bot: Bot, chatId: string, message: string): Promise<void> {
-  try {
-    await bot.api.sendMessage({
-      chat_id: chatId,
-      text: message,
-    });
-  } catch (error: unknown) {
-    const detail = error instanceof Error ? error.message : String(error);
-    console.error(`notify: Telegram send failed: ${detail}`);
-    throw new Error(`Could not send the Telegram notification: ${detail}`);
-  }
-}
 
 export default function notifyExtension(pi: ExtensionAPI): void {
   const z = pi.zod;
-  const bot = new Bot(requireTelegramEnvironment("TELEGRAM_BOT_TOKEN"));
-  const chatId = requireTelegramEnvironment("TELEGRAM_CHAT_ID");
+  const sendTelegramNotification = createTelegramNotifier();
 
   pi.registerTool({
     name: "notify",
@@ -51,7 +24,7 @@ export default function notifyExtension(pi: ExtensionAPI): void {
       }
 
       ctx.ui.notify(params.message, "info");
-      await sendTelegramNotification(bot, chatId, params.message);
+      await sendTelegramNotification(params.message);
 
       return {
         content: [{ type: "text", text: params.message }],
