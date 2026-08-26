@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+MAX_IMAGE_BYTES=$((10 * 1024 * 1024))
+DESTINATION='~/stacks/network/public/'
+
+if (( $# != 1 )); then
+  printf 'Usage: %s IMAGE\n' "${0##*/}" >&2
+  exit 2
+fi
+
+image_path=$1
+
+if [[ ! -f "$image_path" ]]; then
+  printf 'Error: not a file: %s\n' "$image_path" >&2
+  exit 1
+fi
+
+mime_type=$(file --brief --mime-type -- "$image_path")
+if [[ "$mime_type" != image/* ]]; then
+  printf 'Error: not an image: %s (%s)\n' "$image_path" "$mime_type" >&2
+  exit 1
+fi
+
+image_size=$(stat --format='%s' -- "$image_path")
+if (( image_size >= MAX_IMAGE_BYTES )); then
+  printf 'Error: image must be smaller than 10 MiB: %s (%s bytes)\n' "$image_path" "$image_size" >&2
+  exit 1
+fi
+
+scp "$image_path" home-nas:"$DESTINATION"
+printf 'Image is available at __pub__.dondon.haus/%s\n' "${image_path##*/}"

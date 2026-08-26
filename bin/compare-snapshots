@@ -1,0 +1,5 @@
+#!/usr/bin/env sh
+set -eu
+
+project_directory=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+exec pnpm exec tsx "$project_directory/scripts/compare-snapshots.ts" "$@"
