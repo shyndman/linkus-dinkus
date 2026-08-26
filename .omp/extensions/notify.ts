@@ -1,27 +1,46 @@
 import { fileURLToPath } from "node:url";
+import { config } from "dotenv";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+import { Bot } from "gramio";
 
-const NOTIFICATION_AUDIO_PATH = fileURLToPath(new URL("../notification.mp3", import.meta.url));
-const FFPLAY_ARGUMENTS = [
-  "ffplay",
-  "-nodisp",
-  "-autoexit",
-  "-loglevel",
-  "error",
-  NOTIFICATION_AUDIO_PATH,
-] as const;
+const PROJECT_ENV_PATH = fileURLToPath(new URL("../../.env", import.meta.url));
+config({ path: PROJECT_ENV_PATH, quiet: true });
+
+type TelegramEnvironmentName = "TELEGRAM_BOT_TOKEN" | "TELEGRAM_CHAT_ID";
+
+function requireTelegramEnvironment(name: TelegramEnvironmentName): string {
+  const value = process.env[name];
+  if (value) return value;
+  console.error(`notify: missing ${name}`);
+  throw new Error(`Missing required environment variable: ${name}`);
+}
+
+async function sendTelegramNotification(bot: Bot, chatId: string, message: string): Promise<void> {
+  try {
+    await bot.api.sendMessage({
+      chat_id: chatId,
+      text: message,
+    });
+  } catch (error: unknown) {
+    const detail = error instanceof Error ? error.message : String(error);
+    console.error(`notify: Telegram send failed: ${detail}`);
+    throw new Error(`Could not send the Telegram notification: ${detail}`);
+  }
+}
 
 export default function notifyExtension(pi: ExtensionAPI): void {
   const z = pi.zod;
+  const bot = new Bot(requireTelegramEnvironment("TELEGRAM_BOT_TOKEN"));
+  const chatId = requireTelegramEnvironment("TELEGRAM_CHAT_ID");
 
   pi.registerTool({
     name: "notify",
     label: "Notify",
-    description: "Notify the user about a page-watch finding and play the project notification sound.",
+    description: "Send a Telegram page-watch notification.",
     parameters: z.object({
       message: z.string().min(1).describe("Freeform description of what the page watch found."),
     }),
-    approval: "exec",
+    approval: "write",
     loadMode: "essential",
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       if (signal?.aborted) {
@@ -32,26 +51,11 @@ export default function notifyExtension(pi: ExtensionAPI): void {
       }
 
       ctx.ui.notify(params.message, "info");
-      const player = Bun.spawn(FFPLAY_ARGUMENTS, {
-        stdout: "ignore",
-        stderr: "pipe",
-      });
-      const stderrPromise = new Response(player.stderr).text();
-      player.unref();
-      void Promise.all([player.exited, stderrPromise])
-        .then(([exitCode, stderr]): void => {
-          if (exitCode === 0) return;
-          const detail = stderr.trim() || `exit status ${exitCode}`;
-          console.error(`notify: ffplay failed: ${detail}`);
-        })
-        .catch((error: unknown): void => {
-          const detail = error instanceof Error ? error.message : String(error);
-          console.error(`notify: could not monitor ffplay: ${detail}`);
-        });
+      await sendTelegramNotification(bot, chatId, params.message);
 
       return {
         content: [{ type: "text", text: params.message }],
-        details: { notified: true },
+        details: { notified: true, telegram_sent: true },
       };
     },
   });

@@ -12,6 +12,11 @@ Read these named ranges with the Google Sheets batch-read tool:
 - `pollFrequency`
 - `urls`
 
+Immediately after the spreadsheet read succeeds:
+
+1. Run `date --iso-8601=seconds` on the host machine.
+2. Write the command output to the `lastCheckDateTime` named range with the Google Sheets write-cells tool.
+
 Treat the spreadsheet as the current configuration. Do not poll a URL that is absent from `urls`.
 
 ## Poll frequency

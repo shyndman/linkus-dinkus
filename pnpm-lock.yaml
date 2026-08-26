@@ -11,6 +11,12 @@ importers:
       cheerio:
         specifier: 1.2.0
         version: 1.2.0
+      dotenv:
+        specifier: 17.4.2
+        version: 17.4.2
+      gramio:
+        specifier: 0.14.0
+        version: 0.14.0(inspectable@3.0.2)
     devDependencies:
       '@types/node':
         specifier: 24.13.3
@@ -180,6 +186,38 @@ packages:
     cpu: [x64]
     os: [win32]
 
+  '@gramio/callback-data@0.2.0':
+    resolution: {integrity: sha512-hNyFlJz0ydPEFHnul3K9p0vx0rNejGjM2KvAFCaIS6mXGayn2jfNpYPAYuLf0ycR+5FExGKd7t5MYZ5LMENGZg==}
+
+  '@gramio/composer@0.5.0':
+    resolution: {integrity: sha512-CP8DxNzDmVl2uO/L2VtjYycLi6jrPkZvTJoN/qVtct2Ms0oUKlKFgnNidH/i2R41HUow2fU0tlcGb1LR4NPHtg==}
+
+  '@gramio/contexts@0.11.0':
+    resolution: {integrity: sha512-+y22+7qhfZimykT2VMGBIEkgQGe5VU1bVbny5U1Frit92oTrioq10VFOntg36yjvC3w0o2MyR3qL9qbmqHm1yA==}
+    peerDependencies:
+      '@gramio/types': ^10.3.1
+      inspectable: ^3.0.1
+
+  '@gramio/files@0.8.0':
+    resolution: {integrity: sha512-X4wiknligRoP/KA38cNw5lmqQ8qZSCn1ctSVB5gekNUIQvHJ/zbztB7aPyM+TU7zvRSnB26HxLpTsGNL84NeFw==}
+
+  '@gramio/format@0.11.0':
+    resolution: {integrity: sha512-90w6HLypnzTu5FkGueNND++Ei8We5wAnCxMG38o9E5fBot6psNbHTijhSphNWsajLxkRwxX6VxHA1XNx26FSxg==}
+    peerDependencies:
+      marked: ^15.0.11
+      node-html-parser: '>=6.0.0'
+    peerDependenciesMeta:
+      marked:
+        optional: true
+      node-html-parser:
+        optional: true
+
+  '@gramio/keyboards@1.5.0':
+    resolution: {integrity: sha512-Rtqm6KX4XqJgAfLHaP379vd7/VnLSi1TeulPpV/LQolTRZOWHhVtZKZqIhJHNxbFhvIGEPjbZy6KKkiG9ywL9A==}
+
+  '@gramio/types@10.3.1':
+    resolution: {integrity: sha512-K4q9QRMSpHc+B73Vxvf/Xhcbw4VlCoWH2fCUcUWT378yGvpo1i89CqOysj1ZEr4u4LdefPKxVF6b6JDVw9TYDA==}
+
   '@types/node@24.13.3':
     resolution: {integrity: sha512-Dh8vAsV36ig5wa9OX4pXvMc9D3Veibfw2wix0CUwYODLD8nkj9UsLjASr49nPg+2eKzxhBV+v7L8pXvT4e639Q==}
 
@@ -200,6 +238,15 @@ packages:
     resolution: {integrity: sha512-u/O3vwbptzhMs3L1fQE82ZSLHQQfto5gyZzwteVIEyeaY5Fc7R4dapF/BvRoSYFeqfBk4m0V1Vafq5Pjv25wvA==}
     engines: {node: '>= 6'}
 
+  debug@4.4.3:
+    resolution: {integrity: sha512-RGwwWnwQvkVfavKVt22FGLw+xYSdzARwm0ru6DhTVA3umU5hZc28V3kO4stgYryrTlLpuvgI9GiijltAjNbcqA==}
+    engines: {node: '>=6.0'}
+    peerDependencies:
+      supports-color: '*'
+    peerDependenciesMeta:
+      supports-color:
+        optional: true
+
   dom-serializer@2.0.0:
     resolution: {integrity: sha512-wIkAryiqt/nV5EQKqQpo3SToSOV9J0DnbJqwK7Wv/Trc92zIAYZ4FlMu+JPFW1DfGFt81ZTCGgDEabffXeLyJg==}
 
@@ -212,6 +259,10 @@ packages:
 
   domutils@3.2.2:
     resolution: {integrity: sha512-6kZKyUajlDuqlHKVX1w7gyslj9MPIXzIFiz/rGu35uC1wMi+kMhQwGhl4lt9unC9Vb9INnY9Z3/ZA3+FhASLaw==}
+
+  dotenv@17.4.2:
+    resolution: {integrity: sha512-nI4U3TottKAcAD9LLud4Cb7b2QztQMUEfHbvhTH09bqXTxnSie8WnjPALV/WMCrJZ6UV/qHJ6L03OqO3LcdYZw==}
+    engines: {node: '>=12'}
 
   encoding-sniffer@0.2.1:
     resolution: {integrity: sha512-5gvq20T6vfpekVtqrYQsSCFZ1wEg5+wW0/QaZMWkFr6BqD3NfKs0rLCx4rrVlSWJeZb5NBJgVLswK/w2MWU+Gw==}
@@ -238,12 +289,22 @@ packages:
     engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
     os: [darwin]
 
+  gramio@0.14.0:
+    resolution: {integrity: sha512-eEdThOLvAFCjSy7RtNkalld+/XCsybx1KlkbGnfYvX3xYXFcaCgrk71qozkMVGeAYv9PsK2q9/caDhh9HhtrmQ==}
+
   htmlparser2@10.1.0:
     resolution: {integrity: sha512-VTZkM9GWRAtEpveh7MSF6SjjrpNVNNVJfFup7xTY3UpFtm67foy9HDVXneLtFVt4pMz5kZtgNcvCniNFb1hlEQ==}
 
   iconv-lite@0.6.3:
     resolution: {integrity: sha512-4fCk79wshMdzMp2rH06qWrJE4iolqLhCUH+OiuIgU++RB0+94NlDL81atO7GX55uUKueo0txHNtvEyI6D7WdMw==}
     engines: {node: '>=0.10.0'}
+
+  inspectable@3.0.2:
+    resolution: {integrity: sha512-XHygPjNXXe1TWQLlVdCYLejUklsGGo+XWS3Cn/RlkvnhkbZqcQxoXPrSh7Via5aATYJUMWVnrD5CbW2c+BtKMA==}
+    engines: {node: '>=20.0.0'}
+
+  ms@2.1.3:
+    resolution: {integrity: sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==}
 
   nth-check@2.1.1:
     resolution: {integrity: sha512-lqjrjmaOoAnWfMmBPL+XNnynZh2+swxiX3WUE0s4yEHI6m+AwrK2UZOimIRl3X/4QctVqS8AiZjFqyOGrMXb/w==}
@@ -366,6 +427,29 @@ snapshots:
   '@esbuild/win32-x64@0.28.2':
     optional: true
 
+  '@gramio/callback-data@0.2.0': {}
+
+  '@gramio/composer@0.5.0': {}
+
+  '@gramio/contexts@0.11.0(@gramio/types@10.3.1)(inspectable@3.0.2)':
+    dependencies:
+      '@gramio/types': 10.3.1
+      inspectable: 3.0.2
+
+  '@gramio/files@0.8.0':
+    dependencies:
+      '@gramio/types': 10.3.1
+
+  '@gramio/format@0.11.0':
+    dependencies:
+      '@gramio/types': 10.3.1
+
+  '@gramio/keyboards@1.5.0':
+    dependencies:
+      '@gramio/types': 10.3.1
+
+  '@gramio/types@10.3.1': {}
+
   '@types/node@24.13.3':
     dependencies:
       undici-types: 7.18.2
@@ -405,6 +489,10 @@ snapshots:
 
   css-what@6.2.2: {}
 
+  debug@4.4.3:
+    dependencies:
+      ms: 2.1.3
+
   dom-serializer@2.0.0:
     dependencies:
       domelementtype: 2.3.0
@@ -422,6 +510,8 @@ snapshots:
       dom-serializer: 2.0.0
       domelementtype: 2.3.0
       domhandler: 5.0.3
+
+  dotenv@17.4.2: {}
 
   encoding-sniffer@0.2.1:
     dependencies:
@@ -466,6 +556,22 @@ snapshots:
   fsevents@2.3.3:
     optional: true
 
+  gramio@0.14.0(inspectable@3.0.2):
+    dependencies:
+      '@gramio/callback-data': 0.2.0
+      '@gramio/composer': 0.5.0
+      '@gramio/contexts': 0.11.0(@gramio/types@10.3.1)(inspectable@3.0.2)
+      '@gramio/files': 0.8.0
+      '@gramio/format': 0.11.0
+      '@gramio/keyboards': 1.5.0
+      '@gramio/types': 10.3.1
+      debug: 4.4.3
+    transitivePeerDependencies:
+      - inspectable
+      - marked
+      - node-html-parser
+      - supports-color
+
   htmlparser2@10.1.0:
     dependencies:
       domelementtype: 2.3.0
@@ -476,6 +582,10 @@ snapshots:
   iconv-lite@0.6.3:
     dependencies:
       safer-buffer: 2.1.2
+
+  inspectable@3.0.2: {}
+
+  ms@2.1.3: {}
 
   nth-check@2.1.1:
     dependencies:
