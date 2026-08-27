@@ -1,6 +1,7 @@
 import { accessSync, constants, existsSync } from "node:fs";
 import { join, relative } from "node:path";
-import { PROJECT_ROOT, fail, getUrlCacheDirectory } from "./lib.ts";
+import { logger } from "../logger.ts";
+import { PROJECT_ROOT, fail, getUrlCacheDirectory } from "../runtime.ts";
 
 type UrlState = "new" | "configured" | "incomplete";
 type UrlStateResult = Readonly<{
@@ -14,6 +15,7 @@ function main(): void {
 
   const cacheDirectory = getUrlCacheDirectory(url);
   const extractorPath = join(cacheDirectory, "extract");
+  logger.info("Checking whether this page has a usable saved extractor.");
   let state: UrlState;
 
   if (!existsSync(cacheDirectory)) {
@@ -24,6 +26,7 @@ function main(): void {
     accessSync(extractorPath, constants.X_OK);
     state = "configured";
   }
+  logger.info(`The page is ${state}. Its files are in ${relative(PROJECT_ROOT, cacheDirectory)}.`);
 
   const result: UrlStateResult = {
     state,

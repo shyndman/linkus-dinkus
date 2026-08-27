@@ -1,5 +1,6 @@
 import { createInterface } from "node:readline";
-import { fail } from "./lib.ts";
+import { errorDetail, logger } from "../logger.ts";
+import { fail } from "../runtime.ts";
 
 type JsonObject = Readonly<Record<string, unknown>>;
 type Color = (text: string) => string;
@@ -7,18 +8,24 @@ type StreamState = {
   started: boolean;
   content: string;
 };
+type EventCounts = {
+  inputLines: number;
+  invalidLines: number;
+  messageUpdates: number;
+  toolResults: number;
+};
 
 const useColor = process.stdout.isTTY && process.env.NO_COLOR === undefined;
 const paint = (code: number): Color => (text: string): string => useColor ? `\u001b[${code}m${text}\u001b[0m` : text;
 const cyan = paint(36);
 const green = paint(32);
 const red = paint(31);
-const yellow = paint(33);
 const dim = paint(2);
 const MAX_DETAIL_CHARACTERS = 2_000;
 
 const thinking: StreamState = { started: false, content: "" };
 const text: StreamState = { started: false, content: "" };
+const eventCounts: EventCounts = { inputLines: 0, invalidLines: 0, messageUpdates: 0, toolResults: 0 };
 
 function object(value: unknown): JsonObject | null {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -140,8 +147,12 @@ function handleEvent(value: unknown): void {
   const event = object(value);
   if (event === null) return;
   const eventType = string(event.type);
-  if (eventType === "message_update") handleMessageUpdate(event);
+  if (eventType === "message_update") {
+    eventCounts.messageUpdates += 1;
+    handleMessageUpdate(event);
+  }
   if (eventType === "tool_execution_end") {
+    eventCounts.toolResults += 1;
     const result = toolResult(event);
     process.stdout.write(`${result.failed ? red("Failed") : green("Done")}\n`);
     if (result.output !== null) {
@@ -152,19 +163,24 @@ function handleEvent(value: unknown): void {
 }
 
 async function main(): Promise<void> {
+  logger.info("Reading the OMP event stream.");
   const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
   for await (const line of lines) {
+    eventCounts.inputLines += 1;
     if (line.trim().length === 0) continue;
     try {
       handleEvent(JSON.parse(line) as unknown);
     } catch (error: unknown) {
-      const detail = error instanceof Error ? error.message : String(error);
-      console.error(yellow(`Could not read an OMP event: ${detail}`));
+      eventCounts.invalidLines += 1;
+      logger.error(`Could not read OMP event line ${eventCounts.inputLines}. ${errorDetail(error)}`);
       process.exitCode = 1;
     }
   }
   if (thinking.started) finishStream(thinking, "Thinking", null, dim);
   if (text.started) finishStream(text, "Assistant", null, green);
+  logger.info(
+    `Read ${eventCounts.inputLines} lines with ${eventCounts.messageUpdates} message updates, ${eventCounts.toolResults} tool results, and ${eventCounts.invalidLines} invalid lines.`,
+  );
 }
 
 main().catch(fail);

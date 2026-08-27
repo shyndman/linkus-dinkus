@@ -2,4 +2,4 @@
 set -eu
 
 project_directory=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-exec "$project_directory/node_modules/.bin/tsx" "$project_directory/scripts/record-url-result.ts" "$@"
+exec "$project_directory/node_modules/.bin/tsx" "$project_directory/src/page-watch/record-result.ts" "$@"

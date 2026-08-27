@@ -10,7 +10,7 @@ import {
   watchUrls,
   type SnapshotComparison,
   type UrlWatchOperations,
-} from "./watch-urls.ts";
+} from "../src/page-watch/watch-urls.ts";
 
 const URL = "https://example.com/jobs";
 const CACHE_DIRECTORY = "cache/example";
