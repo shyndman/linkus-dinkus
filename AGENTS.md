@@ -11,7 +11,7 @@ The extractor agent makes sure that one saved extractor converts a supplied HTML
 The prompt supplies:
 
 - One URL
-- One cache directory
+- One snapshot directory
 - One current HTML snapshot
 - The notification trigger, which identifies data that the extractor must preserve
 - A setup or audit reason
@@ -35,7 +35,7 @@ Do not evaluate a change against the notification trigger. Do not send notificat
 
 4. Compare the draft with the extraction expectations.
 5. Inspect the supplied HTML when the draft loses required content or relationships.
-6. Create `cache/<url-slug>/extract` and its typed source file.
+6. Create `snapshots/<url-slug>/extract` and its typed source file.
 7. Run the extractor through the canonical runner.
 
    ```sh
@@ -55,7 +55,7 @@ Do not evaluate a change against the notification trigger. Do not send notificat
 
 ### Extractor contract
 
-The fixed extractor path is `cache/<url-slug>/extract`.
+The fixed extractor path is `snapshots/<url-slug>/extract`.
 
 The command contract is:
 
@@ -85,7 +85,7 @@ The change judge decides whether one supplied Markdown difference matches the su
 The prompt supplies:
 
 - One URL
-- One cache directory
+- One snapshot directory
 - One current HTML snapshot
 - One notification trigger
 - The previous and current canonical Markdown paths
@@ -105,23 +105,27 @@ Do not edit the extractor or a snapshot.
 
 Use URL recovery only for notification content. Do not change the canonical Markdown.
 
-## Cache layout
+## Snapshot layout
 
 ```text
-cache/
+snapshots/
 └── <url-slug>/
     ├── extract
     ├── extract.ts
-    ├── snapshot-<UTC timestamp>.html
+    ├── objects/
+    │   └── <SHA-256>.html
+    ├── snapshot-<UTC timestamp>.html -> objects/<SHA-256>.html
     ├── snapshot-<UTC timestamp>.draft.md
     ├── snapshot-<UTC timestamp>.md
     └── failure-state.json
 ```
 
-HTML snapshots are immutable evidence. Draft Markdown is inspection output. Markdown without `.draft` is canonical comparison data.
+HTML snapshots are immutable evidence. Each timestamped HTML path is a symbolic link to its content-addressed object.
+Draft Markdown is inspection output. Markdown without `.draft` is canonical comparison data.
+The poll cycle deletes snapshot files after seven days. It then deletes each HTML object that has no timestamped link.
 
 ## Installed commands
 
 - `bin/defuddle-snapshot <snapshot.html>`: Create draft Markdown.
 - `bin/extract-snapshot <snapshot.html>`: Run the saved extractor and create canonical Markdown.
-- `bin/compare-snapshots <cache-directory>`: Compare the two newest canonical Markdown files.
+- `bin/compare-snapshots <snapshot-directory>`: Compare the two newest canonical Markdown files.

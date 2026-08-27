@@ -3,28 +3,28 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import { tmpdir } from "node:os";
+import type { SnapshotComparison } from "../src/snapshots/compare.ts";
 import {
   htmlChanged,
   incrementHtmlChangeCount,
   watchUrl,
   watchUrls,
-  type SnapshotComparison,
   type UrlWatchOperations,
 } from "../src/page-watch/watch-urls.ts";
 
 const URL = "https://example.com/jobs";
-const CACHE_DIRECTORY = "cache/example";
-const CURRENT_SNAPSHOT = "cache/example/snapshot-20260826T120000Z.html";
+const SNAPSHOT_DIRECTORY = "snapshots/example";
+const CURRENT_SNAPSHOT = "snapshots/example/snapshot-20260826T120000Z.html";
 const UNCHANGED_COMPARISON: SnapshotComparison = {
   state: "unchanged",
-  previous: "cache/example/snapshot-20260826T110000Z.md",
-  current: "cache/example/snapshot-20260826T120000Z.md",
+  previous: "snapshots/example/snapshot-20260826T110000Z.md",
+  current: "snapshots/example/snapshot-20260826T120000Z.md",
   diff: "",
 };
 const CHANGED_COMPARISON: SnapshotComparison = {
   state: "changed",
-  previous: "cache/example/snapshot-20260826T110000Z.md",
-  current: "cache/example/snapshot-20260826T120000Z.md",
+  previous: "snapshots/example/snapshot-20260826T110000Z.md",
+  current: "snapshots/example/snapshot-20260826T120000Z.md",
   diff: "+New job",
 };
 
@@ -33,9 +33,9 @@ function makeOperations(
   overrides: Partial<UrlWatchOperations> = {},
 ): UrlWatchOperations {
   return {
-    classifyUrl: (): Readonly<{ state: "configured"; cacheDirectory: string }> => {
+    classifyUrl: (): Readonly<{ state: "configured"; snapshotDirectory: string }> => {
       calls.push("classify");
-      return { state: "configured", cacheDirectory: CACHE_DIRECTORY };
+      return { state: "configured", snapshotDirectory: SNAPSHOT_DIRECTORY };
     },
     capturePage: (): string => {
       calls.push("capture");
@@ -63,8 +63,11 @@ function makeOperations(
     runJudgeAgent: (): void => {
       calls.push("judge-agent");
     },
-    recordResult: (_url: string, result: "success" | "failure"): void => {
+    recordResult: async (_url: string, result: "success" | "failure"): Promise<void> => {
       calls.push(`record-${result}`);
+    },
+    collectExpiredSnapshots: (): void => {
+      calls.push("collect-expired-snapshots");
     },
     ...overrides,
   };
@@ -85,7 +88,7 @@ test("detects whether the newest HTML snapshot changed", (): void => {
   }
 });
 
-test("persists a separate HTML-change count in the URL cache", (): void => {
+test("persists a separate HTML-change count in the URL snapshot directory", (): void => {
   const directory = mkdtempSync(join(tmpdir(), "page-watch-count-"));
   try {
     assert.equal(incrementHtmlChangeCount(directory), 1);
@@ -195,8 +198,8 @@ test("uses the script agent to set up a new URL", (): void => {
       calls.push("classify");
       classification += 1;
       return classification === 1
-        ? { state: "new", cacheDirectory: CACHE_DIRECTORY }
-        : { state: "configured", cacheDirectory: CACHE_DIRECTORY };
+        ? { state: "new", snapshotDirectory: SNAPSHOT_DIRECTORY }
+        : { state: "configured", snapshotDirectory: SNAPSHOT_DIRECTORY };
     },
     compareSnapshots: (): SnapshotComparison => {
       calls.push("compare-markdown");
@@ -211,13 +214,28 @@ test("uses the script agent to set up a new URL", (): void => {
   assert.deepEqual(calls, ["classify", "capture", "script-agent", "classify", "extract", "compare-markdown"]);
 });
 
-test("records each URL result exactly once", (): void => {
+test("records each URL result exactly once", async (): Promise<void> => {
   const calls: string[] = [];
   const operations = makeOperations(calls);
 
-  const results = watchUrls({ notificationTrigger: "notify for new jobs", urls: [URL] }, operations);
+  const results = await watchUrls({ notificationTrigger: "notify for new jobs", urls: [URL] }, operations);
 
   assert.equal(results.length, 1);
   assert.equal(calls.filter((call: string): boolean => call.startsWith("record-")).length, 1);
-  assert.equal(calls.at(-1), "record-success");
+  assert.equal(calls.at(-1), "collect-expired-snapshots");
+});
+
+test("collects expired snapshots after a failed poll cycle", async (): Promise<void> => {
+  const calls: string[] = [];
+  const operations = makeOperations(calls, {
+    capturePage: (): never => {
+      throw new Error("capture failed");
+    },
+  });
+
+  await assert.rejects(
+    watchUrls({ notificationTrigger: "notify for new jobs", urls: [URL] }, operations),
+    /capture failed/,
+  );
+  assert.equal(calls.at(-1), "collect-expired-snapshots");
 });

@@ -14,7 +14,6 @@ export function runTool(
   acceptedStatuses: readonly number[] = [0],
 ): string {
   const startedAt = performance.now();
-  logger.info(`Started ${relativePath}.`);
   const options: SpawnSyncOptionsWithStringEncoding = {
     cwd: PROJECT_ROOT,
     encoding: "utf8",
@@ -24,31 +23,34 @@ export function runTool(
   const result = spawnSync(resolve(PROJECT_ROOT, relativePath), arguments_, options);
   if (result.stderr.length > 0) process.stderr.write(result.stderr);
   if (result.error) {
-    logger.error(`${relativePath} could not start. ${result.error.message}`);
+    logger.error("A subprocess could not start.", { command: relativePath, error: result.error.message });
     throw new Error(`${relativePath} failed to start: ${result.error.message}`);
   }
   if (result.status === null || !acceptedStatuses.includes(result.status)) {
     const detail = result.stderr.trim() || result.stdout.trim() || `exit status ${result.status}`;
-    logger.error(`${relativePath} failed after ${Math.round(performance.now() - startedAt)} milliseconds with status ${String(result.status)}.`);
+    logger.error("A subprocess failed.", {
+      command: relativePath,
+      durationMilliseconds: Math.round(performance.now() - startedAt),
+      status: result.status,
+    });
     throw new Error(`${relativePath} failed: ${detail}`);
   }
-  logger.info(
-    `${relativePath} finished after ${Math.round(performance.now() - startedAt)} milliseconds and returned ${Buffer.byteLength(result.stdout)} bytes.`,
-  );
   return result.stdout;
 }
 
-export function getUrlCacheDirectory(url: string): string {
+export function getUrlSnapshotDirectory(url: string): string {
   const slug = runTool("bin/slugify", [url]).trim();
   if (slug.length === 0) {
     throw new Error(`bin/slugify returned an empty slug for ${url}`);
   }
-  const cacheDirectory = resolve(PROJECT_ROOT, "cache", slug);
-  logger.info(`Mapped the watched page to ${relative(PROJECT_ROOT, cacheDirectory)}.`);
-  return cacheDirectory;
+  const snapshotDirectory = resolve(PROJECT_ROOT, "snapshots", slug);
+  logger.info("Mapped the watched page to its snapshot directory.", {
+    snapshotDirectory: relative(PROJECT_ROOT, snapshotDirectory),
+  });
+  return snapshotDirectory;
 }
 
 export function fail(error: unknown): never {
-  logger.error(`The application stopped because ${errorDetail(error)}`);
+  logger.fatal("The application stopped.", { error: errorDetail(error) });
   process.exit(1);
 }

@@ -1,24 +1,22 @@
 import { accessSync, constants, existsSync } from "node:fs";
 import { join, relative } from "node:path";
+import { pathToFileURL } from "node:url";
 import { logger } from "../logger.ts";
-import { PROJECT_ROOT, fail, getUrlCacheDirectory } from "../runtime.ts";
+import { PROJECT_ROOT, fail, getUrlSnapshotDirectory } from "../runtime.ts";
 
-type UrlState = "new" | "configured" | "incomplete";
-type UrlStateResult = Readonly<{
+export type UrlState = "new" | "configured" | "incomplete";
+export type UrlStateResult = Readonly<{
   state: UrlState;
-  cacheDirectory: string;
+  snapshotDirectory: string;
 }>;
 
-function main(): void {
-  const url = process.argv[2];
-  if (!url) throw new Error("Usage: bin/url-state <url>");
-
-  const cacheDirectory = getUrlCacheDirectory(url);
-  const extractorPath = join(cacheDirectory, "extract");
+export function getUrlState(url: string): UrlStateResult {
+  const snapshotDirectory = getUrlSnapshotDirectory(url);
+  const extractorPath = join(snapshotDirectory, "extract");
   logger.info("Checking whether this page has a usable saved extractor.");
   let state: UrlState;
 
-  if (!existsSync(cacheDirectory)) {
+  if (!existsSync(snapshotDirectory)) {
     state = "new";
   } else if (!existsSync(extractorPath)) {
     state = "incomplete";
@@ -26,17 +24,25 @@ function main(): void {
     accessSync(extractorPath, constants.X_OK);
     state = "configured";
   }
-  logger.info(`The page is ${state}. Its files are in ${relative(PROJECT_ROOT, cacheDirectory)}.`);
-
-  const result: UrlStateResult = {
+  const relativeSnapshotDirectory = relative(PROJECT_ROOT, snapshotDirectory);
+  logger.info("Read the page configuration state.", {
     state,
-    cacheDirectory: relative(PROJECT_ROOT, cacheDirectory),
-  };
-  process.stdout.write(`${JSON.stringify(result)}\n`);
+    snapshotDirectory: relativeSnapshotDirectory,
+  });
+  return { state, snapshotDirectory: relativeSnapshotDirectory };
 }
 
-try {
-  main();
-} catch (error: unknown) {
-  fail(error);
+function main(): void {
+  const url = process.argv[2];
+  if (!url) throw new Error("Usage: bin/url-state <url>");
+  process.stdout.write(`${JSON.stringify(getUrlState(url))}\n`);
+}
+
+const entryPath = process.argv[1];
+if (entryPath !== undefined && import.meta.url === pathToFileURL(entryPath).href) {
+  try {
+    main();
+  } catch (error: unknown) {
+    fail(error);
+  }
 }

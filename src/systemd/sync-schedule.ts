@@ -2,6 +2,7 @@ import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { logger } from "../logger.ts";
 import { fail } from "../runtime.ts";
 
@@ -9,24 +10,23 @@ const TIMER_UNIT_NAME = "shoestring-page-watch.timer";
 const SERVICE_UNIT_NAME = "shoestring-page-watch.service";
 const TIMER_UNIT_PATH = resolve(homedir(), ".config", "systemd", "user", TIMER_UNIT_NAME);
 
-type SyncResult = Readonly<{
+export type SyncResult = Readonly<{
   calendarExpressions: readonly string[];
   timerUnitPath: string;
 }>;
 
 function runSystemctl(arguments_: readonly string[]): void {
-  const startedAt = performance.now();
-  logger.info(`Running systemctl ${arguments_.join(" ")}.`);
   const result: SpawnSyncReturns<string> = spawnSync("systemctl", ["--user", ...arguments_], {
     encoding: "utf8",
   });
   if (result.error) throw new Error(`systemctl failed to start: ${result.error.message}`);
-  if (result.status === 0) {
-    logger.info(`systemctl ${arguments_.join(" ")} finished after ${Math.round(performance.now() - startedAt)} milliseconds.`);
-    return;
-  }
+  if (result.status === 0) return;
   const detail = result.stderr.trim() || result.stdout.trim() || `exit status ${result.status}`;
-  logger.error(`systemctl ${arguments_.join(" ")} failed with status ${String(result.status)}. ${detail}`);
+  logger.error("A systemctl command failed.", {
+    command: arguments_.join(" "),
+    status: result.status,
+    error: detail,
+  });
   throw new Error(`systemctl ${arguments_.join(" ")} failed: ${detail}`);
 }
 function validateCalendarExpression(expression: string): void {
@@ -36,7 +36,7 @@ function validateCalendarExpression(expression: string): void {
   if (result.error) throw new Error(`systemd-analyze failed to start: ${result.error.message}`);
   if (result.status === 0) return;
   const detail = result.stderr.trim() || result.stdout.trim() || `exit status ${result.status}`;
-  logger.error(`A calendar expression failed systemd validation. ${detail}`);
+  logger.error("A calendar expression failed systemd validation.", { error: detail });
   throw new Error(`Invalid systemd calendar expression ${JSON.stringify(expression)}: ${detail}`);
 }
 
@@ -58,31 +58,43 @@ function buildTimerUnit(calendarExpressions: readonly string[]): string {
   ].join("\n");
 }
 
-function main(): void {
-  const calendarExpressions: readonly string[] = process.argv.slice(2);
+export function syncSystemdSchedule(calendarExpressions: readonly string[]): SyncResult {
   if (calendarExpressions.length === 0) throw new Error("At least one systemd calendar expression is required");
-  logger.info(`Received ${calendarExpressions.length} calendar expressions for the timer.`);
+  logger.info("Received calendar expressions for the timer.", {
+    expressionCount: calendarExpressions.length,
+  });
   for (const [index, expression] of calendarExpressions.entries()) {
-    logger.info(`Validating calendar expression ${index + 1} of ${calendarExpressions.length}.`);
+    logger.info("Validating a calendar expression.", {
+      expressionNumber: index + 1,
+      expressionCount: calendarExpressions.length,
+    });
     validateCalendarExpression(expression);
-    logger.info(`Calendar expression ${index + 1} is valid.`);
+    logger.info("The calendar expression is valid.", { expressionNumber: index + 1 });
   }
-
 
   mkdirSync(dirname(TIMER_UNIT_PATH), { recursive: true });
   writeFileSync(TIMER_UNIT_PATH, buildTimerUnit(calendarExpressions), "utf8");
-  logger.info(`Wrote the timer unit to ${TIMER_UNIT_PATH}.`);
+  logger.info("Wrote the timer unit.", { path: TIMER_UNIT_PATH });
+  logger.info("Reloading the systemd user manager.");
   runSystemctl(["daemon-reload"]);
+  logger.info("Enabling the page-watch timer.");
   runSystemctl(["enable", TIMER_UNIT_NAME]);
+  logger.info("Restarting the page-watch timer.");
   runSystemctl(["restart", TIMER_UNIT_NAME]);
   logger.info("The page-watch timer is enabled and running with its new schedule.");
-
-  const result: SyncResult = { calendarExpressions, timerUnitPath: TIMER_UNIT_PATH };
-  process.stdout.write(`${JSON.stringify(result)}\n`);
+  return { calendarExpressions, timerUnitPath: TIMER_UNIT_PATH };
 }
 
-try {
-  main();
-} catch (error: unknown) {
-  fail(error);
+function main(): void {
+  const calendarExpressions: readonly string[] = process.argv.slice(2);
+  process.stdout.write(`${JSON.stringify(syncSystemdSchedule(calendarExpressions))}\n`);
+}
+
+const entryPath = process.argv[1];
+if (entryPath !== undefined && import.meta.url === pathToFileURL(entryPath).href) {
+  try {
+    main();
+  } catch (error: unknown) {
+    fail(error);
+  }
 }

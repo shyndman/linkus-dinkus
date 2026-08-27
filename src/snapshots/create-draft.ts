@@ -8,11 +8,14 @@ function main(): void {
   if (!snapshotPath) throw new Error("Usage: bin/defuddle-snapshot <snapshot.html>");
   if (!existsSync(snapshotPath)) throw new Error(`Snapshot does not exist: ${snapshotPath}`);
   if (extname(snapshotPath) !== ".html") throw new Error(`Snapshot must be an HTML file: ${snapshotPath}`);
-  logger.info(`Creating draft Markdown from ${basename(snapshotPath)}.`);
+  logger.info("Creating draft Markdown.", { snapshot: basename(snapshotPath) });
 
   const outputPath = snapshotPath.slice(0, -".html".length) + ".draft.md";
   runTool("bin/defuddle", ["parse", "--markdown", "--output", outputPath, snapshotPath]);
-  logger.info(`Saved ${basename(outputPath)} with ${statSync(outputPath).size} bytes.`);
+  logger.info("Saved the draft Markdown.", {
+    snapshot: basename(outputPath),
+    bytes: statSync(outputPath).size,
+  });
   process.stdout.write(`${relative(PROJECT_ROOT, outputPath)}\n`);
 }
 

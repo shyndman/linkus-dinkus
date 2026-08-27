@@ -172,15 +172,21 @@ async function main(): Promise<void> {
       handleEvent(JSON.parse(line) as unknown);
     } catch (error: unknown) {
       eventCounts.invalidLines += 1;
-      logger.error(`Could not read OMP event line ${eventCounts.inputLines}. ${errorDetail(error)}`);
+      logger.error("Could not read an OMP event.", {
+        lineNumber: eventCounts.inputLines,
+        error: errorDetail(error),
+      });
       process.exitCode = 1;
     }
   }
   if (thinking.started) finishStream(thinking, "Thinking", null, dim);
   if (text.started) finishStream(text, "Assistant", null, green);
-  logger.info(
-    `Read ${eventCounts.inputLines} lines with ${eventCounts.messageUpdates} message updates, ${eventCounts.toolResults} tool results, and ${eventCounts.invalidLines} invalid lines.`,
-  );
+  logger.info("Finished reading the OMP event stream.", {
+    inputLines: eventCounts.inputLines,
+    messageUpdates: eventCounts.messageUpdates,
+    toolResults: eventCounts.toolResults,
+    invalidLines: eventCounts.invalidLines,
+  });
 }
 
 main().catch(fail);

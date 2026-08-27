@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
-import { createTelegramNotifier } from "../../scripts/telegram.ts";
+import { createTelegramNotifier } from "../../src/integrations/telegram.ts";
 
 
 export default function notifyExtension(pi: ExtensionAPI): void {
