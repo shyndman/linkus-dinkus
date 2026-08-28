@@ -70,7 +70,7 @@ function readMcpServerConfiguration(): McpServerConfiguration {
   if (!result.success) {
     throw new Error(`${MCP_CONFIG_PATH} does not contain a valid google-sheets server`);
   }
-  logger.info("google Sheets server configuration is valid.");
+  logger.info("Google Sheets server configuration is valid.");
   return result.data.mcpServers["google-sheets"];
 }
 
@@ -93,7 +93,7 @@ function getToolText(result: unknown, toolName: string): string {
 async function callSheetTool(client: ToolClient, name: string, arguments_: Readonly<Record<string, string>>): Promise<string> {
   logger.info("calling a Google Sheets tool.", { tool: name });
   const result: unknown = await client.callTool({ name, arguments: arguments_ });
-  logger.info("google Sheets tool returned.", { tool: name });
+  logger.info("Google Sheets tool returned.", { tool: name });
   return getToolText(result, name);
 }
 
@@ -142,7 +142,7 @@ export async function readConfigurationAndWriteTimestamp(client: ToolClient): Pr
     callSheetTool(client, "read_cells", sheetArguments("pollFrequency")),
     callSheetTool(client, "read_cells", sheetArguments("urls")),
   ]);
-  logger.info("google Sheets returned all three configuration ranges.");
+  logger.info("Google Sheets returned all three configuration ranges.");
 
   const dateTime = getHostDateTime();
   await callSheetTool(client, "write_cells", {
