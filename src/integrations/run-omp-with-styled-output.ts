@@ -2,19 +2,19 @@ import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { createInterface } from "node:readline";
 import type { Readable } from "node:stream";
+import { SITE_LOG_TAG_ENVIRONMENT_VARIABLE } from "../logger.ts";
 import { fail, PROJECT_ROOT } from "../runtime.ts";
 
 const OUTPUT_INDENT = "  ";
 const OUTPUT_COLOR = "\u001b[38;2;180;180;180m";
 const RESET_COLOR = "\u001b[0m";
-const LOG_PREFIX_PATTERN = /^\d{2,}:\d{2}\.\d{3} \[(?:dbug|info|warn|err!|fatl)\] /;
+const LOG_PREFIX_PATTERN = /^\d{2,}:\d{2}\.\d{3} \[(?:dbug|info|warn|err!|crit)\] /;
 
 async function writeOutputLine(line: string): Promise<void> {
   const message = line.replace(LOG_PREFIX_PATTERN, "");
-  const useColor = process.stderr.isTTY && process.env.NO_COLOR === undefined;
-  const output = useColor
-    ? `${OUTPUT_COLOR}${OUTPUT_INDENT}${message}${RESET_COLOR}\n`
-    : `${OUTPUT_INDENT}${message}\n`;
+  const site = process.env[SITE_LOG_TAG_ENVIRONMENT_VARIABLE];
+  const sitePrefix = site === undefined ? "" : `site: ${site} `;
+  const output = `${OUTPUT_COLOR}${OUTPUT_INDENT}${sitePrefix}${message}${RESET_COLOR}\n`;
   if (!process.stderr.write(output)) await once(process.stderr, "drain");
 }
 

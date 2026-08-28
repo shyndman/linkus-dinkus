@@ -29,7 +29,7 @@ const LOG_LEVEL_LABEL: Readonly<Record<LogLevel, string>> = {
   info: "info",
   warn: "warn",
   error: "err!",
-  fatal: "fatl",
+  fatal: "crit",
 };
 const LOG_LEVEL_COLOR: Readonly<Record<LogLevel, string>> = {
   debug: "\u001b[38;2;128;128;128m",
