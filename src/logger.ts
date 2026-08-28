@@ -148,8 +148,12 @@ const winstonLogger: Logger = createLogger({
   exitOnError: false,
 });
 
+export function getSiteLogTag(): string | undefined {
+  return siteLogTagStorage.getStore() ?? env[SITE_LOG_TAG_ENVIRONMENT_VARIABLE];
+}
+
 function writeLog(level: LogLevel, message: string, fields: LogFields = {}): void {
-  const site = siteLogTagStorage.getStore() ?? env[SITE_LOG_TAG_ENVIRONMENT_VARIABLE];
+  const site = getSiteLogTag();
   winstonLogger.log(site === undefined ? { level, message, ...fields } : { level, message, site, ...fields });
 }
 

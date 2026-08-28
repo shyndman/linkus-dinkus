@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { basename, join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
-import { logger } from "../logger.ts";
+import { getSiteLogTag, logger } from "../logger.ts";
 import { PROJECT_ROOT, fail, getUrlSnapshotDirectory, runTool } from "../runtime.ts";
 
 const OUTER_HTML_EXPRESSION = "document.documentElement.outerHTML";
@@ -47,25 +47,36 @@ export async function capturePage(url: string): Promise<string> {
   logger.info("preparing a rendered page snapshot.");
 
   const snapshotDirectory = await getUrlSnapshotDirectory(url);
+  const browserSession = getSiteLogTag();
+  if (browserSession === undefined) {
+    logger.error("cannot capture a page without a site log tag.");
+    throw new Error("Page capture requires a site log tag");
+  }
+  const sessionArguments = ["--session", browserSession] as const;
   await mkdir(snapshotDirectory, { recursive: true });
   logger.info("snapshot directory is ready. The browser will settle before capture.", {
     settleMilliseconds: RENDER_SETTLE_MILLISECONDS,
   });
-  await runTool("bin/camou", ["open", url]);
-  await runTool("bin/camou", ["wait", String(RENDER_SETTLE_MILLISECONDS)]);
-  logger.info("rendered page settled. Reading the document HTML.");
+  try {
+    await runTool("bin/camou", [...sessionArguments, "open", url]);
+    await runTool("bin/camou", [...sessionArguments, "wait", String(RENDER_SETTLE_MILLISECONDS)]);
+    logger.info("rendered page settled. Reading the document HTML.");
 
-  const html = await runTool("bin/camou", ["eval", OUTER_HTML_EXPRESSION]);
-  if (!html.trimStart().startsWith("<html")) {
-    logger.error("browser response did not start with an HTML document.", {
-      bytes: Buffer.byteLength(html),
-    });
-    throw new Error(`Camoufox returned invalid HTML for ${url}`);
+    const html = await runTool("bin/camou", [...sessionArguments, "eval", OUTER_HTML_EXPRESSION]);
+    if (!html.trimStart().startsWith("<html")) {
+      logger.error("browser response did not start with an HTML document.", {
+        bytes: Buffer.byteLength(html),
+      });
+      throw new Error(`Camoufox returned invalid HTML for ${url}`);
+    }
+    logger.info("browser returned a valid HTML document.", { bytes: Buffer.byteLength(html) });
+
+    const snapshotPath = await storeHtmlSnapshot(snapshotDirectory, html, new Date());
+    return relative(PROJECT_ROOT, snapshotPath);
+  } finally {
+    logger.info("closing the browser session.");
+    await runTool("bin/camou", [...sessionArguments, "close"]);
   }
-  logger.info("browser returned a valid HTML document.", { bytes: Buffer.byteLength(html) });
-
-  const snapshotPath = await storeHtmlSnapshot(snapshotDirectory, html, new Date());
-  return relative(PROJECT_ROOT, snapshotPath);
 }
 
 async function main(): Promise<void> {
