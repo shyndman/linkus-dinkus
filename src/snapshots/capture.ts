@@ -6,7 +6,7 @@ import { logger } from "../logger.ts";
 import { PROJECT_ROOT, fail, getUrlSnapshotDirectory, runTool } from "../runtime.ts";
 
 const OUTER_HTML_EXPRESSION = "document.documentElement.outerHTML";
-const RENDER_SETTLE_MILLISECONDS = 2_000;
+const RENDER_SETTLE_MILLISECONDS = 10_000;
 const CONTENT_HASH_ALGORITHM = "sha256";
 
 function utcTimestamp(date: Date): string {
