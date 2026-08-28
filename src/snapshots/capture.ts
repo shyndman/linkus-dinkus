@@ -23,7 +23,7 @@ export function storeHtmlSnapshot(snapshotDirectory: string, html: string, captu
 
   const snapshotPath = join(snapshotDirectory, `snapshot-${utcTimestamp(capturedAt)}.html`);
   symlinkSync(join("objects", objectName), snapshotPath);
-  logger.info("Saved the content-addressed HTML snapshot.", {
+  logger.info("saved the content-addressed HTML snapshot.", {
     snapshot: basename(snapshotPath),
     object: objectName,
     bytes: Buffer.byteLength(html),
@@ -33,25 +33,25 @@ export function storeHtmlSnapshot(snapshotDirectory: string, html: string, captu
 
 
 export function capturePage(url: string): string {
-  logger.info("Preparing a rendered page snapshot.");
+  logger.info("preparing a rendered page snapshot.");
 
   const snapshotDirectory = getUrlSnapshotDirectory(url);
   mkdirSync(snapshotDirectory, { recursive: true });
-  logger.info("The snapshot directory is ready. The browser will settle before capture.", {
+  logger.info("snapshot directory is ready. The browser will settle before capture.", {
     settleMilliseconds: RENDER_SETTLE_MILLISECONDS,
   });
   runTool("bin/camou", ["open", url]);
   runTool("bin/camou", ["wait", String(RENDER_SETTLE_MILLISECONDS)]);
-  logger.info("The rendered page settled. Reading the document HTML.");
+  logger.info("rendered page settled. Reading the document HTML.");
 
   const html = runTool("bin/camou", ["eval", OUTER_HTML_EXPRESSION]);
   if (!html.trimStart().startsWith("<html")) {
-    logger.error("The browser response did not start with an HTML document.", {
+    logger.error("browser response did not start with an HTML document.", {
       bytes: Buffer.byteLength(html),
     });
     throw new Error(`Camoufox returned invalid HTML for ${url}`);
   }
-  logger.info("The browser returned a valid HTML document.", { bytes: Buffer.byteLength(html) });
+  logger.info("browser returned a valid HTML document.", { bytes: Buffer.byteLength(html) });
 
   const snapshotPath = storeHtmlSnapshot(snapshotDirectory, html, new Date());
   return relative(PROJECT_ROOT, snapshotPath);

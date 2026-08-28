@@ -39,18 +39,18 @@ function createUnifiedDiff(
 
 
 export function compareSnapshots(snapshotDirectory: string): SnapshotComparison {
-  logger.info("Looking for canonical Markdown snapshots.");
+  logger.info("looking for canonical Markdown snapshots.");
   const snapshots = readdirSync(snapshotDirectory)
     .filter((name: string): boolean => CANONICAL_SNAPSHOT_PATTERN.test(name))
     .sort();
-  logger.info("Found canonical Markdown snapshots.", { snapshotCount: snapshots.length });
+  logger.info("found canonical Markdown snapshots.", { snapshotCount: snapshots.length });
   if (snapshots.length === 0) throw new Error(`No canonical snapshots in ${snapshotDirectory}`);
 
   const currentPath = join(snapshotDirectory, snapshots.at(-1)!);
   const currentName = relative(PROJECT_ROOT, currentPath);
-  logger.info("Selected the current canonical snapshot.", { snapshot: basename(currentPath) });
+  logger.info("selected the current canonical snapshot.", { snapshot: basename(currentPath) });
   if (snapshots.length === 1) {
-    logger.info("This is the first canonical snapshot, so it establishes the baseline.");
+    logger.info("this is the first canonical snapshot, so it establishes the baseline.");
     return { state: "baseline", current: currentName };
   }
 
@@ -58,12 +58,12 @@ export function compareSnapshots(snapshotDirectory: string): SnapshotComparison 
   const previousContent = readFileSync(previousPath, "utf8");
   const currentContent = readFileSync(currentPath, "utf8");
   const previousName = relative(PROJECT_ROOT, previousPath);
-  logger.info("Comparing canonical snapshots.", {
+  logger.info("comparing canonical snapshots.", {
     previousSnapshot: basename(previousPath),
     currentSnapshot: basename(currentPath),
   });
   if (previousContent === currentContent) {
-    logger.info("The canonical Markdown did not change.", {
+    logger.info("canonical Markdown did not change.", {
       bytes: Buffer.byteLength(currentContent),
     });
     return {
@@ -74,12 +74,12 @@ export function compareSnapshots(snapshotDirectory: string): SnapshotComparison 
     };
   }
 
-  logger.info("The canonical Markdown changed.", {
+  logger.info("canonical Markdown changed.", {
     previousBytes: Buffer.byteLength(previousContent),
     currentBytes: Buffer.byteLength(currentContent),
   });
   const diff = createUnifiedDiff(previousPath, currentPath, previousName, currentName);
-  logger.info("Created the unified difference.", { bytes: Buffer.byteLength(diff) });
+  logger.info("created the unified difference.", { bytes: Buffer.byteLength(diff) });
   return {
     state: "changed",
     previous: previousName,

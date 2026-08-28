@@ -163,7 +163,7 @@ function handleEvent(value: unknown): void {
 }
 
 async function main(): Promise<void> {
-  logger.info("Reading the OMP event stream.");
+  logger.info("reading the OMP event stream.");
   const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
   for await (const line of lines) {
     eventCounts.inputLines += 1;
@@ -172,7 +172,7 @@ async function main(): Promise<void> {
       handleEvent(JSON.parse(line) as unknown);
     } catch (error: unknown) {
       eventCounts.invalidLines += 1;
-      logger.error("Could not read an OMP event.", {
+      logger.error("could not read an OMP event.", {
         lineNumber: eventCounts.inputLines,
         error: errorDetail(error),
       });
@@ -181,7 +181,7 @@ async function main(): Promise<void> {
   }
   if (thinking.started) finishStream(thinking, "Thinking", null, dim);
   if (text.started) finishStream(text, "Assistant", null, green);
-  logger.info("Finished reading the OMP event stream.", {
+  logger.info("finished reading the OMP event stream.", {
     inputLines: eventCounts.inputLines,
     messageUpdates: eventCounts.messageUpdates,
     toolResults: eventCounts.toolResults,

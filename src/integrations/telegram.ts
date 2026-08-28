@@ -13,25 +13,25 @@ export type TelegramNotifier = (message: string) => Promise<void>;
 function requireTelegramEnvironment(name: TelegramEnvironmentName): string {
   const value = process.env[name];
   if (value) {
-    logger.info("A required Telegram setting is present.", { setting: name });
+    logger.info("a required Telegram setting is present.", { setting: name });
     return value;
   }
-  logger.error("A required Telegram setting is missing.", { setting: name });
+  logger.error("a required Telegram setting is missing.", { setting: name });
   throw new Error(`Missing required environment variable: ${name}`);
 }
 
 export function createTelegramNotifier(): TelegramNotifier {
   const bot = new Bot(requireTelegramEnvironment("TELEGRAM_BOT_TOKEN"));
   const chatId = requireTelegramEnvironment("TELEGRAM_CHAT_ID");
-  logger.info("The Telegram notifier is ready.");
+  logger.info("telegram notifier is ready.");
   return async (message: string): Promise<void> => {
-    logger.info("Sending a Telegram notification.", { characters: message.length });
+    logger.info("sending a Telegram notification.", { characters: message.length });
     try {
       await bot.api.sendMessage({ chat_id: chatId, text: message });
-      logger.info("Telegram accepted the notification.");
+      logger.info("telegram accepted the notification.");
     } catch (error: unknown) {
       const detail = errorDetail(error);
-      logger.error("Telegram rejected the notification.", { error: detail });
+      logger.error("telegram rejected the notification.", { error: detail });
       throw new Error(`Could not send the Telegram notification: ${detail}`);
     }
   };

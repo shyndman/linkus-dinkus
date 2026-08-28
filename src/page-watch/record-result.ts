@@ -30,11 +30,11 @@ function readFailureState(path: string): FailureState {
       throw new Error(`Invalid failure state in ${path}`);
     }
     const consecutiveFailures = value.consecutiveFailures as number;
-    logger.info("Read the failure streak.", { consecutiveFailures });
+    logger.info("read the failure streak.", { consecutiveFailures });
     return { consecutiveFailures };
   } catch (error: unknown) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-      logger.info("No failure state exists yet. The failure streak starts at zero.");
+      logger.info("no failure state exists yet. The failure streak starts at zero.");
       return { consecutiveFailures: 0 };
     }
     throw error;
@@ -43,17 +43,17 @@ function readFailureState(path: string): FailureState {
 
 function writeFailureState(path: string, state: FailureState): void {
   writeFileSync(path, `${JSON.stringify(state)}\n`, "utf8");
-  logger.info("Saved the failure streak.", { consecutiveFailures: state.consecutiveFailures });
+  logger.info("saved the failure streak.", { consecutiveFailures: state.consecutiveFailures });
 }
 
 export async function recordUrlResult(url: string, result: UrlResult): Promise<RecordResult> {
-  logger.info("Recording the result of one watched page.");
+  logger.info("recording the result of one watched page.");
   const snapshotDirectory = getUrlSnapshotDirectory(url);
   const statePath = join(snapshotDirectory, STATE_FILENAME);
   const previous = readFailureState(statePath);
   const consecutiveFailures = result === "success" ? 0 : previous.consecutiveFailures + 1;
   logger.info(
-    result === "success" ? "The page succeeded." : "The page failed.",
+    result === "success" ? "page succeeded." : "page failed.",
     {
       previousConsecutiveFailures: previous.consecutiveFailures,
       consecutiveFailures,
@@ -62,7 +62,7 @@ export async function recordUrlResult(url: string, result: UrlResult): Promise<R
   let notified = false;
 
   if (consecutiveFailures === FAILURE_THRESHOLD) {
-    logger.warn("The failure streak reached the notification threshold.", {
+    logger.warn("failure streak reached the notification threshold.", {
       consecutiveFailures,
       notificationThreshold: FAILURE_THRESHOLD,
     });
@@ -71,7 +71,7 @@ export async function recordUrlResult(url: string, result: UrlResult): Promise<R
     notified = true;
   }
   if (result === "failure" && consecutiveFailures !== FAILURE_THRESHOLD) {
-    logger.info("The failure streak does not trigger a notification.", {
+    logger.info("failure streak does not trigger a notification.", {
       consecutiveFailures,
       notificationThreshold: FAILURE_THRESHOLD,
     });

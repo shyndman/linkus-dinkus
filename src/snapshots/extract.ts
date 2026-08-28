@@ -10,13 +10,13 @@ export function extractSnapshot(snapshotPath: string): string {
 
   const extractorPath = join(dirname(snapshotPath), "extract");
   if (!existsSync(extractorPath)) throw new Error(`Extractor does not exist: ${extractorPath}`);
-  logger.info("Running the saved extractor.", { snapshot: basename(snapshotPath) });
+  logger.info("running the saved extractor.", { snapshot: basename(snapshotPath) });
 
   const markdown = runTool(extractorPath, [snapshotPath]);
-  logger.info("The extractor returned canonical Markdown.", { bytes: Buffer.byteLength(markdown) });
+  logger.info("extractor returned canonical Markdown.", { bytes: Buffer.byteLength(markdown) });
   const outputPath = snapshotPath.slice(0, -".html".length) + ".md";
   writeFileSync(outputPath, markdown, "utf8");
-  logger.info("Saved the canonical Markdown.", {
+  logger.info("saved the canonical Markdown.", {
     snapshot: basename(outputPath),
     bytes: Buffer.byteLength(markdown),
   });

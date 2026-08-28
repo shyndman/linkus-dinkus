@@ -13,7 +13,7 @@ export type UrlStateResult = Readonly<{
 export function getUrlState(url: string): UrlStateResult {
   const snapshotDirectory = getUrlSnapshotDirectory(url);
   const extractorPath = join(snapshotDirectory, "extract");
-  logger.info("Checking whether this page has a usable saved extractor.");
+  logger.info("checking whether this page has a usable saved extractor.");
   let state: UrlState;
 
   if (!existsSync(snapshotDirectory)) {
@@ -25,7 +25,7 @@ export function getUrlState(url: string): UrlStateResult {
     state = "configured";
   }
   const relativeSnapshotDirectory = relative(PROJECT_ROOT, snapshotDirectory);
-  logger.info("Read the page configuration state.", {
+  logger.info("read the page configuration state.", {
     state,
     snapshotDirectory: relativeSnapshotDirectory,
   });

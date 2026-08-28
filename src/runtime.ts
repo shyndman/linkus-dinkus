@@ -23,12 +23,12 @@ export function runTool(
   const result = spawnSync(resolve(PROJECT_ROOT, relativePath), arguments_, options);
   if (result.stderr.length > 0) process.stderr.write(result.stderr);
   if (result.error) {
-    logger.error("A subprocess could not start.", { command: relativePath, error: result.error.message });
+    logger.error("a subprocess could not start.", { command: relativePath, error: result.error.message });
     throw new Error(`${relativePath} failed to start: ${result.error.message}`);
   }
   if (result.status === null || !acceptedStatuses.includes(result.status)) {
     const detail = result.stderr.trim() || result.stdout.trim() || `exit status ${result.status}`;
-    logger.error("A subprocess failed.", {
+    logger.error("a subprocess failed.", {
       command: relativePath,
       durationMilliseconds: Math.round(performance.now() - startedAt),
       status: result.status,
@@ -44,13 +44,13 @@ export function getUrlSnapshotDirectory(url: string): string {
     throw new Error(`bin/slugify returned an empty slug for ${url}`);
   }
   const snapshotDirectory = resolve(PROJECT_ROOT, "snapshots", slug);
-  logger.info("Mapped the watched page to its snapshot directory.", {
+  logger.info("mapped the watched page to its snapshot directory.", {
     snapshotDirectory: relative(PROJECT_ROOT, snapshotDirectory),
   });
   return snapshotDirectory;
 }
 
 export function fail(error: unknown): never {
-  logger.fatal("The application stopped.", { error: errorDetail(error) });
+  logger.fatal("application stopped.", { error: errorDetail(error) });
   process.exit(1);
 }

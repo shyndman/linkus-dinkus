@@ -79,7 +79,7 @@ export function collectExpiredSnapshots(
     deletedSnapshots += result.deletedSnapshots;
     deletedObjects += result.deletedObjects;
   }
-  logger.info("Collected expired snapshot data.", {
+  logger.info("collected expired snapshot data.", {
     retentionDays: RETENTION_DAYS,
     deletedSnapshots,
     deletedObjects,

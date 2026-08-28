@@ -64,13 +64,13 @@ type PollFrequencyDependencies = Readonly<{
 }>;
 
 function readMcpServerConfiguration(): McpServerConfiguration {
-  logger.info("Reading the Google Sheets server configuration from .omp/mcp.json.");
+  logger.info("reading the Google Sheets server configuration from .omp/mcp.json.");
   const parsed: unknown = JSON.parse(readFileSync(MCP_CONFIG_PATH, "utf8"));
   const result = McpConfigurationSchema.safeParse(parsed);
   if (!result.success) {
     throw new Error(`${MCP_CONFIG_PATH} does not contain a valid google-sheets server`);
   }
-  logger.info("The Google Sheets server configuration is valid.");
+  logger.info("google Sheets server configuration is valid.");
   return result.data.mcpServers["google-sheets"];
 }
 
@@ -91,9 +91,9 @@ function getToolText(result: unknown, toolName: string): string {
 }
 
 async function callSheetTool(client: ToolClient, name: string, arguments_: Readonly<Record<string, string>>): Promise<string> {
-  logger.info("Calling a Google Sheets tool.", { tool: name });
+  logger.info("calling a Google Sheets tool.", { tool: name });
   const result: unknown = await client.callTool({ name, arguments: arguments_ });
-  logger.info("The Google Sheets tool returned.", { tool: name });
+  logger.info("google Sheets tool returned.", { tool: name });
   return getToolText(result, name);
 }
 
@@ -132,7 +132,7 @@ function getHostDateTime(): string {
 }
 
 export async function readConfigurationAndWriteTimestamp(client: ToolClient): Promise<PageWatchConfiguration> {
-  logger.info("Reading the notification rule, poll schedule, and watched-page list from Google Sheets.");
+  logger.info("reading the notification rule, poll schedule, and watched-page list from Google Sheets.");
   const sheetArguments = (rangeName: string): Readonly<Record<string, string>> => ({
     spreadsheet_id: SPREADSHEET_ID,
     range_notation: rangeName,
@@ -142,7 +142,7 @@ export async function readConfigurationAndWriteTimestamp(client: ToolClient): Pr
     callSheetTool(client, "read_cells", sheetArguments("pollFrequency")),
     callSheetTool(client, "read_cells", sheetArguments("urls")),
   ]);
-  logger.info("Google Sheets returned all three configuration ranges.");
+  logger.info("google Sheets returned all three configuration ranges.");
 
   const dateTime = getHostDateTime();
   await callSheetTool(client, "write_cells", {
@@ -150,10 +150,10 @@ export async function readConfigurationAndWriteTimestamp(client: ToolClient): Pr
     range_notation: "lastCheckDateTime",
     values: JSON.stringify([[dateTime]]),
   });
-  logger.info("Updated the last-check cell.", { dateTime });
+  logger.info("updated the last-check cell.", { dateTime });
 
   const urls = readUrlCells(urlsText);
-  logger.info("Loaded the watched pages from Google Sheets.", { pageCount: urls.length });
+  logger.info("loaded the watched pages from Google Sheets.", { pageCount: urls.length });
   return {
     notificationTrigger: readSingleTextCell(notificationTriggerText, "notificationTrigger"),
     pollFrequency: readSingleTextCell(pollFrequencyText, "pollFrequency"),
@@ -171,24 +171,24 @@ function readCachedPollFrequency(): string | null {
 }
 
 function runOmp(arguments_: readonly string[]): string {
-  logger.info("Started the schedule model.");
+  logger.info("started the schedule model.");
   const result: SpawnSyncReturns<string> = spawnSync("omp", arguments_, {
     cwd: PROJECT_ROOT,
     encoding: "utf8",
   });
   if (result.error) {
-    logger.error("The schedule model could not start.", { error: result.error.message });
+    logger.error("schedule model could not start.", { error: result.error.message });
     throw new Error(`omp failed to start: ${result.error.message}`);
   }
   if (result.status !== 0) {
     const detail = result.stderr.trim() || result.stdout.trim() || `exit status ${result.status}`;
-    logger.error("The schedule model failed.", { status: result.status, error: detail });
+    logger.error("schedule model failed.", { status: result.status, error: detail });
     throw new Error(`omp failed: ${detail}`);
   }
   return result.stdout;
 }
 function readSystemdTimeDocumentation(): string {
-  logger.info("Reading the local systemd calendar documentation for the schedule model.");
+  logger.info("reading the local systemd calendar documentation for the schedule model.");
   const result: SpawnSyncReturns<string> = spawnSync("man", ["--pager=cat", "7", "systemd.time"], {
     encoding: "utf8",
   });
@@ -199,7 +199,7 @@ function readSystemdTimeDocumentation(): string {
   }
   const documentation = result.stdout.trim();
   if (documentation.length === 0) throw new Error("The systemd.time documentation is empty");
-  logger.info("Read the systemd calendar documentation.", {
+  logger.info("read the systemd calendar documentation.", {
     bytes: Buffer.byteLength(documentation),
   });
   return documentation;
@@ -250,8 +250,8 @@ export function buildSystemdCalendarPrompt(
 function getCalendarExpressions(pollFrequency: string, validationError: string | null): readonly string[] {
   logger.info(
     validationError === null
-      ? "Requesting an initial systemd calendar schedule."
-      : "Requesting a corrected systemd calendar schedule after validation failed.",
+      ? "requesting an initial systemd calendar schedule."
+      : "requesting a corrected systemd calendar schedule after validation failed.",
   );
   const prompt = buildSystemdCalendarPrompt(
     pollFrequency,
@@ -269,14 +269,14 @@ function getCalendarExpressions(pollFrequency: string, validationError: string |
     prompt,
   ]).trim();
   const expressions = parseSystemdCalendarResponse(output);
-  logger.info("The schedule model returned calendar expressions.", { expressionCount: expressions.length });
+  logger.info("schedule model returned calendar expressions.", { expressionCount: expressions.length });
   return expressions;
 }
 
 function validateCalendarExpressions(expressions: readonly string[]): CalendarValidationResult {
-  logger.info("Validating calendar expressions with systemd.", { expressionCount: expressions.length });
+  logger.info("validating calendar expressions with systemd.", { expressionCount: expressions.length });
   for (const [index, expression] of expressions.entries()) {
-    logger.info("Validating a calendar expression.", {
+    logger.info("validating a calendar expression.", {
       expressionNumber: index + 1,
       expressionCount: expressions.length,
     });
@@ -286,25 +286,25 @@ function validateCalendarExpressions(expressions: readonly string[]): CalendarVa
     if (result.error) throw new Error(`systemd-analyze failed to start: ${result.error.message}`);
     if (result.status === 0) continue;
     const detail = result.stderr.trim() || result.stdout.trim() || `exit status ${result.status}`;
-    logger.warn("A calendar expression failed validation.", {
+    logger.warn("a calendar expression failed validation.", {
       expressionNumber: index + 1,
       error: detail,
     });
     return { state: "invalid", detail: `${JSON.stringify(expression)}: ${detail}` };
   }
-  logger.info("Every calendar expression passed systemd validation.");
+  logger.info("every calendar expression passed systemd validation.");
   return { state: "valid" };
 }
 
 function installCalendarExpressions(expressions: readonly string[]): void {
-  logger.info("Installing calendar expressions.", { expressionCount: expressions.length });
+  logger.info("installing calendar expressions.", { expressionCount: expressions.length });
   try {
     syncSystemdSchedule(expressions);
   } catch (error: unknown) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(`Could not install systemd calendar expressions ${JSON.stringify(expressions)}: ${detail}`, { cause: error });
   }
-  logger.info("Installed the new systemd calendar schedule.");
+  logger.info("installed the new systemd calendar schedule.");
 }
 
 function writeCachedPollFrequency(pollFrequency: string): void {
@@ -319,20 +319,20 @@ export function syncPollFrequency(pollFrequency: string, dependencies: PollFrequ
   installCalendarExpressions,
   writeCachedText: writeCachedPollFrequency,
 }): boolean {
-  logger.info("Checking whether the poll schedule changed.");
+  logger.info("checking whether the poll schedule changed.");
   if (dependencies.readCachedText() === pollFrequency) {
-    logger.info("The poll schedule did not change. The installed timer remains unchanged.");
+    logger.info("poll schedule did not change. The installed timer remains unchanged.");
     return false;
   }
-  logger.info("The poll schedule changed. A new timer schedule is required.");
+  logger.info("poll schedule changed. A new timer schedule is required.");
 
   let expressions = dependencies.getCalendarExpressions(pollFrequency, null);
   const initialValidation = dependencies.validateCalendarExpressions(expressions);
-  logger.info("The initial schedule validation finished.", { result: initialValidation.state });
+  logger.info("initial schedule validation finished.", { result: initialValidation.state });
   if (initialValidation.state === "invalid") {
     expressions = dependencies.getCalendarExpressions(pollFrequency, initialValidation.detail);
     const correctedValidation = dependencies.validateCalendarExpressions(expressions);
-    logger.info("The corrected schedule validation finished.", { result: correctedValidation.state });
+    logger.info("corrected schedule validation finished.", { result: correctedValidation.state });
     if (correctedValidation.state === "invalid") {
       throw new Error(`The corrected systemd calendar expression is invalid: ${correctedValidation.detail}`);
     }
@@ -340,33 +340,33 @@ export function syncPollFrequency(pollFrequency: string, dependencies: PollFrequ
 
   dependencies.installCalendarExpressions(expressions);
   dependencies.writeCachedText(pollFrequency);
-  logger.info("Saved the poll schedule after the timer update succeeded.");
+  logger.info("saved the poll schedule after the timer update succeeded.");
   return true;
 }
 
 
 async function main(): Promise<void> {
-  logger.info("Starting the page-watch application.");
+  logger.info("starting the page-watch application.");
   const mcpServer = readMcpServerConfiguration();
   const client = new Client({ name: "shoestring-page-watch", version: "1.0.0" });
   const transport = new StdioClientTransport({ command: mcpServer.command, args: [...mcpServer.args] });
-  logger.info("Connecting to Google Sheets.");
+  logger.info("connecting to Google Sheets.");
   try {
     await client.connect(transport);
-    logger.info("Connected to Google Sheets.");
+    logger.info("connected to Google Sheets.");
     const configuration = await readConfigurationAndWriteTimestamp(client);
     syncPollFrequency(configuration.pollFrequency);
-    logger.info("Closing the Google Sheets connection before page checks start.");
+    logger.info("closing the Google Sheets connection before page checks start.");
     await client.close();
-    logger.info("Closed the Google Sheets connection.");
+    logger.info("closed the Google Sheets connection.");
     await watchUrls({
       notificationTrigger: configuration.notificationTrigger,
       urls: configuration.urls,
     });
-    logger.info("Finished all page checks.", { pageCount: configuration.urls.length });
+    logger.info("finished all page checks.", { pageCount: configuration.urls.length });
   } catch (error: unknown) {
     await client.close().catch((closeError: unknown): void => {
-      logger.error("Could not close the Google Sheets connection after a failure.", {
+      logger.error("could not close the Google Sheets connection after a failure.", {
         error: errorDetail(closeError),
       });
     });

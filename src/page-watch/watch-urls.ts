@@ -72,20 +72,20 @@ export function htmlChanged(snapshotDirectory: string, currentSnapshot: string):
   const snapshots = readdirSync(directory)
     .filter((name: string): boolean => HTML_SNAPSHOT_PATTERN.test(name))
     .sort();
-  logger.info("Found HTML snapshots for comparison.", {
+  logger.info("found HTML snapshots for comparison.", {
     snapshotCount: snapshots.length,
     currentSnapshot: currentName,
   });
   const currentIndex = snapshots.indexOf(currentName);
   if (currentIndex === -1) {
-    logger.error("The current HTML snapshot is missing.", {
+    logger.error("current HTML snapshot is missing.", {
       currentSnapshot: currentName,
       snapshotDirectory,
     });
     throw new Error(`Current HTML snapshot is absent from ${snapshotDirectory}: ${currentSnapshot}`);
   }
   if (currentIndex === 0) {
-    logger.info("The current HTML snapshot establishes the baseline.", {
+    logger.info("current HTML snapshot establishes the baseline.", {
       currentSnapshot: currentName,
     });
     return false;
@@ -97,14 +97,14 @@ export function htmlChanged(snapshotDirectory: string, currentSnapshot: string):
   const current = readFileSync(join(directory, currentName));
   const changed = !previous.equals(current);
   if (changed) {
-    logger.info("The rendered HTML changed.", {
+    logger.info("rendered HTML changed.", {
       currentSnapshot: currentName,
       previousSnapshot: previousName,
       currentBytes: current.byteLength,
       previousBytes: previous.byteLength,
     });
   } else {
-    logger.info("The rendered HTML did not change.", {
+    logger.info("rendered HTML did not change.", {
       currentSnapshot: currentName,
       previousSnapshot: previousName,
       bytes: current.byteLength,
@@ -120,25 +120,25 @@ export function incrementHtmlChangeCount(snapshotDirectory: string): number {
   try {
     const text = readFileSync(countPath, "utf8").trim();
     if (!/^(0|[1-9]\d*)$/.test(text)) {
-      logger.error("The HTML change count is invalid.", { file: HTML_CHANGE_COUNT_FILE });
+      logger.error("html change count is invalid.", { file: HTML_CHANGE_COUNT_FILE });
       throw new Error(`${countPath} does not contain a nonnegative integer`);
     }
     previous = Number(text);
-    logger.info("Read the saved HTML change count.", { changeCount: previous });
+    logger.info("read the saved HTML change count.", { changeCount: previous });
   } catch (error: unknown) {
     if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
-    logger.info("No HTML change count exists yet. The count starts at zero.");
+    logger.info("no HTML change count exists yet. The count starts at zero.");
   }
   const next = previous + 1;
   mkdirSync(directory, { recursive: true });
   writeFileSync(countPath, `${next}\n`, "utf8");
-  logger.info("Saved the HTML change count.", { changeCount: next });
+  logger.info("saved the HTML change count.", { changeCount: next });
   return next;
 }
 
 function runOmpAgent(model: string, thinking: "high" | "xhigh", maxTime: string, prompt: string): void {
   const startedAt = performance.now();
-  logger.info("Starting an agent.", { model, timeLimitSeconds: Number(maxTime) });
+  logger.info("starting an agent.", { model, timeLimitSeconds: Number(maxTime) });
   const result: SpawnSyncReturns<Buffer> = spawnSync(process.execPath, [
     "--import",
     "tsx",
@@ -155,17 +155,17 @@ function runOmpAgent(model: string, thinking: "high" | "xhigh", maxTime: string,
     stdio: ["ignore", "inherit", "inherit"],
   });
   if (result.error) {
-    logger.error("The agent could not start.", { error: result.error.message });
+    logger.error("agent could not start.", { error: result.error.message });
     throw new Error(`omp failed to start: ${result.error.message}`);
   }
   if (result.status !== 0) {
-    logger.error("The agent failed.", {
+    logger.error("agent failed.", {
       durationMilliseconds: Math.round(performance.now() - startedAt),
       status: result.status,
     });
     throw new Error(`omp failed with exit status ${result.status}`);
   }
-  logger.info("The agent finished.", {
+  logger.info("agent finished.", {
     durationMilliseconds: Math.round(performance.now() - startedAt),
   });
 }
@@ -175,7 +175,7 @@ function runScriptAgent(task: ScriptAgentTask): void {
     ? "Create and test the extractor for this new or incomplete URL."
     : "Examine the saved extractor against the current HTML and extracted output. Fix and test it only if it is wrong.";
   logger.info(
-    task.reason === "setup" ? "Starting extractor setup." : "Starting the scheduled extractor audit.",
+    task.reason === "setup" ? "starting extractor setup." : "starting the scheduled extractor audit.",
     { snapshot: basename(task.currentSnapshot) },
   );
   const prompt = [
@@ -185,11 +185,11 @@ function runScriptAgent(task: ScriptAgentTask): void {
     `Task: ${JSON.stringify(task)}`,
   ].join("\n");
   runOmpAgent(AGENT_MODEL, "xhigh", SCRIPT_AGENT_MAX_TIME_SECONDS, prompt);
-  logger.info(task.reason === "setup" ? "The extractor setup finished." : "The extractor audit finished.");
+  logger.info(task.reason === "setup" ? "extractor setup finished." : "extractor audit finished.");
 }
 
 function runJudgeAgent(task: JudgeAgentTask): void {
-  logger.info("Starting the change judge.", { snapshot: basename(task.currentSnapshot) });
+  logger.info("starting the change judge.", { snapshot: basename(task.currentSnapshot) });
   const prompt = [
     "Act only as the change judge described in AGENTS.md.",
     "Evaluate the supplied Markdown difference against notificationTrigger.",
@@ -197,7 +197,7 @@ function runJudgeAgent(task: JudgeAgentTask): void {
     `Task: ${JSON.stringify(task)}`,
   ].join("\n");
   runOmpAgent(AGENT_MODEL, "high", JUDGE_AGENT_MAX_TIME_SECONDS, prompt);
-  logger.info("The change judge finished.");
+  logger.info("change judge finished.");
 }
 
 
@@ -224,12 +224,12 @@ function setUpUrl(
   initialState: UrlStateResult,
   operations: UrlWatchOperations,
 ): UrlWatchResult {
-  logger.info("Setting up a page.", {
+  logger.info("setting up a page.", {
     initialState: initialState.state,
     snapshotDirectory: initialState.snapshotDirectory,
   });
   const currentSnapshot = operations.capturePage(url);
-  logger.info("Captured an HTML snapshot for extractor setup.", {
+  logger.info("captured an HTML snapshot for extractor setup.", {
     snapshot: basename(currentSnapshot),
   });
   operations.runScriptAgent({
@@ -240,14 +240,14 @@ function setUpUrl(
     currentSnapshot,
   });
   const configured = operations.classifyUrl(url);
-  logger.info("The extractor setup finished.", { state: configured.state });
+  logger.info("extractor setup finished.", { state: configured.state });
   if (configured.state !== "configured") throw new Error(`The extractor agent did not configure ${url}`);
   const canonicalSnapshot = operations.extractSnapshot(currentSnapshot);
-  logger.info("Created canonical Markdown with the new extractor.", {
+  logger.info("created canonical Markdown with the new extractor.", {
     snapshot: basename(canonicalSnapshot),
   });
   const comparison = operations.compareSnapshots(configured.snapshotDirectory);
-  logger.info("Compared the setup snapshot.", { result: comparison.state });
+  logger.info("compared the setup snapshot.", { result: comparison.state });
   if (initialState.state === "new" && comparison.state !== "baseline") {
     throw new Error(`The first canonical snapshot for ${url} was not a baseline`);
   }
@@ -272,8 +272,8 @@ function auditExtractorAfterHtmlChange(
   const auditDue = count % HTML_CHANGE_REVIEW_INTERVAL === 0;
   logger.info(
     auditDue
-      ? "The HTML change requires the scheduled extractor audit."
-      : "The HTML change does not require an extractor audit.",
+      ? "html change requires the scheduled extractor audit."
+      : "html change does not require an extractor audit.",
     { changeCount: count, auditInterval: HTML_CHANGE_REVIEW_INTERVAL },
   );
   if (!auditDue) return false;
@@ -294,9 +294,9 @@ function watchConfiguredUrl(
   urlState: UrlStateResult,
   operations: UrlWatchOperations,
 ): UrlWatchResult {
-  logger.info("Checking a configured page.", { snapshotDirectory: urlState.snapshotDirectory });
+  logger.info("checking a configured page.", { snapshotDirectory: urlState.snapshotDirectory });
   const currentSnapshot = operations.capturePage(url);
-  logger.info("Captured an HTML snapshot.", { snapshot: basename(currentSnapshot) });
+  logger.info("captured an HTML snapshot.", { snapshot: basename(currentSnapshot) });
   const didHtmlChange = operations.htmlChanged(urlState.snapshotDirectory, currentSnapshot);
   const scriptAgentRan = auditExtractorAfterHtmlChange(
     didHtmlChange,
@@ -308,11 +308,11 @@ function watchConfiguredUrl(
   );
 
   const canonicalSnapshot = operations.extractSnapshot(currentSnapshot);
-  logger.info("Created canonical Markdown.", { snapshot: basename(canonicalSnapshot) });
+  logger.info("created canonical Markdown.", { snapshot: basename(canonicalSnapshot) });
   const comparison = operations.compareSnapshots(urlState.snapshotDirectory);
-  logger.info("Compared the canonical Markdown.", { result: comparison.state });
+  logger.info("compared the canonical Markdown.", { result: comparison.state });
   if (comparison.state !== "changed") {
-    logger.info("The change judge is not needed.");
+    logger.info("change judge is not needed.");
     return {
       url,
       state: comparison.state,
@@ -322,7 +322,7 @@ function watchConfiguredUrl(
     };
   }
 
-  logger.info("The canonical Markdown changed. The change judge is required.", {
+  logger.info("canonical Markdown changed. The change judge is required.", {
     differenceBytes: Buffer.byteLength(comparison.diff),
   });
   operations.runJudgeAgent({
@@ -347,7 +347,7 @@ export function watchUrl(
   operations: UrlWatchOperations = DEFAULT_URL_WATCH_OPERATIONS,
 ): UrlWatchResult {
   const state = operations.classifyUrl(url);
-  logger.info("Classified the page.", { state: state.state, snapshotDirectory: state.snapshotDirectory });
+  logger.info("classified the page.", { state: state.state, snapshotDirectory: state.snapshotDirectory });
   return state.state === "configured"
     ? watchConfiguredUrl(url, notificationTrigger, state, operations)
     : setUpUrl(url, notificationTrigger, state, operations);
@@ -357,32 +357,32 @@ export async function watchUrls(
   input: WatchInput,
   operations: UrlWatchOperations = DEFAULT_URL_WATCH_OPERATIONS,
 ): Promise<readonly UrlWatchResult[]> {
-  logger.info("Starting page checks.", { pageCount: input.urls.length });
+  logger.info("starting page checks.", { pageCount: input.urls.length });
   const results: UrlWatchResult[] = [];
   const failures: string[] = [];
   for (const [index, url] of input.urls.entries()) {
-    logger.info("Starting a page check.", {
+    logger.info("starting a page check.", {
       pageNumber: index + 1,
       pageCount: input.urls.length,
     });
     try {
       const result = watchUrl(url, input.notificationTrigger, operations);
       await operations.recordResult(url, "success");
-      logger.info("The page check finished.", {
+      logger.info("page check finished.", {
         pageNumber: index + 1,
         result: result.state,
       });
       results.push(result);
     } catch (error: unknown) {
       const detail = errorDetail(error);
-      logger.error("The page check failed.", { pageNumber: index + 1, error: detail });
+      logger.error("page check failed.", { pageNumber: index + 1, error: detail });
       failures.push(`${url}: ${detail}`);
       try {
         await operations.recordResult(url, "failure");
-        logger.info("Recorded the page-check failure.", { pageNumber: index + 1 });
+        logger.info("recorded the page-check failure.", { pageNumber: index + 1 });
       } catch (recordError: unknown) {
         const recordDetail = errorDetail(recordError);
-        logger.error("Could not record the page-check failure.", {
+        logger.error("could not record the page-check failure.", {
           pageNumber: index + 1,
           error: recordDetail,
         });
@@ -394,16 +394,16 @@ export async function watchUrls(
     operations.collectExpiredSnapshots();
   } catch (error: unknown) {
     const detail = errorDetail(error);
-    logger.error("Snapshot garbage collection failed.", { error: detail });
+    logger.error("snapshot garbage collection failed.", { error: detail });
     failures.push(`snapshot garbage collection: ${detail}`);
   }
   if (failures.length > 0) {
-    logger.error("Some page checks failed.", {
+    logger.error("some page checks failed.", {
       failureCount: failures.length,
       pageCount: input.urls.length,
     });
     throw new Error(`URL watch failures:\n${failures.join("\n")}`);
   }
-  logger.info("All page checks finished successfully.", { pageCount: results.length });
+  logger.info("all page checks finished successfully.", { pageCount: results.length });
   return results;
 }
