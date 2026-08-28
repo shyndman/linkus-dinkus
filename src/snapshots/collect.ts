@@ -1,13 +1,12 @@
 import {
-  existsSync,
-  lstatSync,
-  readdirSync,
-  readlinkSync,
-  unlinkSync,
-} from "node:fs";
+  lstat,
+  readdir,
+  readlink,
+  unlink,
+} from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { logger } from "../logger.ts";
-import { PROJECT_ROOT } from "../runtime.ts";
+import { pathExists, PROJECT_ROOT } from "../runtime.ts";
 
 const RETENTION_DAYS = 7;
 const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1_000;
@@ -33,30 +32,33 @@ function timestampMilliseconds(timestamp: string): number {
   );
 }
 
-function collectPageSnapshots(pageDirectory: string, cutoffMilliseconds: number): SnapshotCollectionResult {
+async function collectPageSnapshots(
+  pageDirectory: string,
+  cutoffMilliseconds: number,
+): Promise<SnapshotCollectionResult> {
   let deletedSnapshots = 0;
-  for (const entry of readdirSync(pageDirectory, { withFileTypes: true })) {
+  for (const entry of await readdir(pageDirectory, { withFileTypes: true })) {
     const match = SNAPSHOT_FILE_PATTERN.exec(entry.name);
     if (match?.[1] === undefined || timestampMilliseconds(match[1]) > cutoffMilliseconds) continue;
 
-    unlinkSync(join(pageDirectory, entry.name));
+    await unlink(join(pageDirectory, entry.name));
     deletedSnapshots += 1;
   }
 
   const referencedObjects = new Set<string>();
-  for (const entry of readdirSync(pageDirectory, { withFileTypes: true })) {
+  for (const entry of await readdir(pageDirectory, { withFileTypes: true })) {
     if (!HTML_SNAPSHOT_PATTERN.test(entry.name)) continue;
     const snapshotPath = join(pageDirectory, entry.name);
-    if (!lstatSync(snapshotPath).isSymbolicLink()) continue;
-    referencedObjects.add(basename(readlinkSync(snapshotPath)));
+    if (!(await lstat(snapshotPath)).isSymbolicLink()) continue;
+    referencedObjects.add(basename(await readlink(snapshotPath)));
   }
 
   const objectDirectory = join(pageDirectory, "objects");
   let deletedObjects = 0;
-  if (existsSync(objectDirectory)) {
-    for (const entry of readdirSync(objectDirectory, { withFileTypes: true })) {
+  if (await pathExists(objectDirectory)) {
+    for (const entry of await readdir(objectDirectory, { withFileTypes: true })) {
       if (!entry.isFile() || !HTML_OBJECT_PATTERN.test(entry.name) || referencedObjects.has(entry.name)) continue;
-      unlinkSync(join(objectDirectory, entry.name));
+      await unlink(join(objectDirectory, entry.name));
       deletedObjects += 1;
     }
   }
@@ -64,18 +66,18 @@ function collectPageSnapshots(pageDirectory: string, cutoffMilliseconds: number)
   return { deletedSnapshots, deletedObjects };
 }
 
-export function collectExpiredSnapshots(
+export async function collectExpiredSnapshots(
   snapshotRoot: string = SNAPSHOT_ROOT,
   now: Date = new Date(),
-): SnapshotCollectionResult {
-  if (!existsSync(snapshotRoot)) return { deletedSnapshots: 0, deletedObjects: 0 };
+): Promise<SnapshotCollectionResult> {
+  if (!(await pathExists(snapshotRoot))) return { deletedSnapshots: 0, deletedObjects: 0 };
 
   const cutoffMilliseconds = now.getTime() - RETENTION_DAYS * MILLISECONDS_PER_DAY;
   let deletedSnapshots = 0;
   let deletedObjects = 0;
-  for (const entry of readdirSync(snapshotRoot, { withFileTypes: true })) {
+  for (const entry of await readdir(snapshotRoot, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
-    const result = collectPageSnapshots(join(snapshotRoot, entry.name), cutoffMilliseconds);
+    const result = await collectPageSnapshots(join(snapshotRoot, entry.name), cutoffMilliseconds);
     deletedSnapshots += result.deletedSnapshots;
     deletedObjects += result.deletedObjects;
   }

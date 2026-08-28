@@ -24,11 +24,11 @@ function makeSnapshotRoot(): Readonly<{ root: string; page: string }> {
   return { root, page };
 }
 
-test("stores duplicate HTML once and links each timestamp to its object", (): void => {
+test("stores duplicate HTML once and links each timestamp to its object", async (): Promise<void> => {
   const { root, page } = makeSnapshotRoot();
   try {
-    const first = storeHtmlSnapshot(page, "<html>same</html>", new Date("2026-08-27T10:00:00Z"));
-    const second = storeHtmlSnapshot(page, "<html>same</html>", new Date("2026-08-27T11:00:00Z"));
+    const first = await storeHtmlSnapshot(page, "<html>same</html>", new Date("2026-08-27T10:00:00Z"));
+    const second = await storeHtmlSnapshot(page, "<html>same</html>", new Date("2026-08-27T11:00:00Z"));
     const objects = readdirSync(join(page, "objects"));
 
     assert.equal(objects.length, 1);
@@ -43,11 +43,11 @@ test("stores duplicate HTML once and links each timestamp to its object", (): vo
   }
 });
 
-test("deletes seven-day snapshots and their unreferenced HTML objects", (): void => {
+test("deletes seven-day snapshots and their unreferenced HTML objects", async (): Promise<void> => {
   const { root, page } = makeSnapshotRoot();
   try {
-    const oldHtml = storeHtmlSnapshot(page, "<html>old</html>", OLD_TIME);
-    const recentHtml = storeHtmlSnapshot(page, "<html>recent</html>", RECENT_TIME);
+    const oldHtml = await storeHtmlSnapshot(page, "<html>old</html>", OLD_TIME);
+    const recentHtml = await storeHtmlSnapshot(page, "<html>recent</html>", RECENT_TIME);
     const oldBase = oldHtml.slice(0, -".html".length);
     const recentBase = recentHtml.slice(0, -".html".length);
     writeFileSync(`${oldBase}.md`, "old\n", "utf8");
@@ -56,7 +56,7 @@ test("deletes seven-day snapshots and their unreferenced HTML objects", (): void
 
     const oldObject = basename(readlinkSync(oldHtml));
     const recentObject = basename(readlinkSync(recentHtml));
-    const result = collectExpiredSnapshots(root, CURRENT_TIME);
+    const result = await collectExpiredSnapshots(root, CURRENT_TIME);
 
     assert.deepEqual(result, { deletedSnapshots: 3, deletedObjects: 1 });
     assert.deepEqual(

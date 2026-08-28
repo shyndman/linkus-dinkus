@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { readdir, readFile } from "node:fs/promises";
 import { basename, join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
 import { logger } from "../logger.ts";
@@ -20,12 +20,12 @@ export type UnchangedComparison = Readonly<{
 export type SnapshotComparison = BaselineComparison | ChangedComparison | UnchangedComparison;
 
 const CANONICAL_SNAPSHOT_PATTERN = /^snapshot-\d{8}T\d{6}Z\.md$/;
-function createUnifiedDiff(
+async function createUnifiedDiff(
   previousPath: string,
   currentPath: string,
   previousName: string,
   currentName: string,
-): string {
+): Promise<string> {
   return runTool("/usr/bin/diff", [
     "--unified=3",
     "--label",
@@ -34,13 +34,13 @@ function createUnifiedDiff(
     currentName,
     previousPath,
     currentPath,
-  ], undefined, [0, 1]);
+  ], [0, 1]);
 }
 
 
-export function compareSnapshots(snapshotDirectory: string): SnapshotComparison {
+export async function compareSnapshots(snapshotDirectory: string): Promise<SnapshotComparison> {
   logger.info("looking for canonical Markdown snapshots.");
-  const snapshots = readdirSync(snapshotDirectory)
+  const snapshots = (await readdir(snapshotDirectory))
     .filter((name: string): boolean => CANONICAL_SNAPSHOT_PATTERN.test(name))
     .sort();
   logger.info("found canonical Markdown snapshots.", { snapshotCount: snapshots.length });
@@ -55,8 +55,10 @@ export function compareSnapshots(snapshotDirectory: string): SnapshotComparison 
   }
 
   const previousPath = join(snapshotDirectory, snapshots.at(-2)!);
-  const previousContent = readFileSync(previousPath, "utf8");
-  const currentContent = readFileSync(currentPath, "utf8");
+  const [previousContent, currentContent] = await Promise.all([
+    readFile(previousPath, "utf8"),
+    readFile(currentPath, "utf8"),
+  ]);
   const previousName = relative(PROJECT_ROOT, previousPath);
   logger.info("comparing canonical snapshots.", {
     previousSnapshot: basename(previousPath),
@@ -78,7 +80,7 @@ export function compareSnapshots(snapshotDirectory: string): SnapshotComparison 
     previousBytes: Buffer.byteLength(previousContent),
     currentBytes: Buffer.byteLength(currentContent),
   });
-  const diff = createUnifiedDiff(previousPath, currentPath, previousName, currentName);
+  const diff = await createUnifiedDiff(previousPath, currentPath, previousName, currentName);
   logger.info("created the unified difference.", { bytes: Buffer.byteLength(diff) });
   return {
     state: "changed",
@@ -88,17 +90,13 @@ export function compareSnapshots(snapshotDirectory: string): SnapshotComparison 
   };
 }
 
-function main(): void {
+async function main(): Promise<void> {
   const snapshotDirectory = process.argv[2];
   if (!snapshotDirectory) throw new Error("Usage: bin/compare-snapshots <snapshot-directory>");
-  process.stdout.write(`${JSON.stringify(compareSnapshots(snapshotDirectory))}\n`);
+  process.stdout.write(`${JSON.stringify(await compareSnapshots(snapshotDirectory))}\n`);
 }
 
 const entryPath = process.argv[1];
 if (entryPath !== undefined && import.meta.url === pathToFileURL(entryPath).href) {
-  try {
-    main();
-  } catch (error: unknown) {
-    fail(error);
-  }
+  main().catch(fail);
 }

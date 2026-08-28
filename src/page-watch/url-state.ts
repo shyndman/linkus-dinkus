@@ -1,8 +1,8 @@
-import { accessSync, constants, existsSync } from "node:fs";
+import { access, constants } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
 import { logger } from "../logger.ts";
-import { PROJECT_ROOT, fail, getUrlSnapshotDirectory } from "../runtime.ts";
+import { PROJECT_ROOT, fail, getUrlSnapshotDirectory, pathExists } from "../runtime.ts";
 
 export type UrlState = "new" | "configured" | "incomplete";
 export type UrlStateResult = Readonly<{
@@ -10,18 +10,18 @@ export type UrlStateResult = Readonly<{
   snapshotDirectory: string;
 }>;
 
-export function getUrlState(url: string): UrlStateResult {
-  const snapshotDirectory = getUrlSnapshotDirectory(url);
+export async function getUrlState(url: string): Promise<UrlStateResult> {
+  const snapshotDirectory = await getUrlSnapshotDirectory(url);
   const extractorPath = join(snapshotDirectory, "extract");
   logger.info("checking whether this page has a usable saved extractor.");
   let state: UrlState;
 
-  if (!existsSync(snapshotDirectory)) {
+  if (!(await pathExists(snapshotDirectory))) {
     state = "new";
-  } else if (!existsSync(extractorPath)) {
+  } else if (!(await pathExists(extractorPath))) {
     state = "incomplete";
   } else {
-    accessSync(extractorPath, constants.X_OK);
+    await access(extractorPath, constants.X_OK);
     state = "configured";
   }
   const relativeSnapshotDirectory = relative(PROJECT_ROOT, snapshotDirectory);
@@ -32,17 +32,13 @@ export function getUrlState(url: string): UrlStateResult {
   return { state, snapshotDirectory: relativeSnapshotDirectory };
 }
 
-function main(): void {
+async function main(): Promise<void> {
   const url = process.argv[2];
   if (!url) throw new Error("Usage: bin/url-state <url>");
-  process.stdout.write(`${JSON.stringify(getUrlState(url))}\n`);
+  process.stdout.write(`${JSON.stringify(await getUrlState(url))}\n`);
 }
 
 const entryPath = process.argv[1];
 if (entryPath !== undefined && import.meta.url === pathToFileURL(entryPath).href) {
-  try {
-    main();
-  } catch (error: unknown) {
-    fail(error);
-  }
+  main().catch(fail);
 }

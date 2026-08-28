@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { logger } from "../logger.ts";
@@ -17,9 +17,9 @@ export type RecordResult = Readonly<{
 const FAILURE_THRESHOLD = 3;
 const STATE_FILENAME = "failure-state.json";
 
-function readFailureState(path: string): FailureState {
+async function readFailureState(path: string): Promise<FailureState> {
   try {
-    const value = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    const value = JSON.parse(await readFile(path, "utf8")) as unknown;
     if (
       typeof value !== "object"
       || value === null
@@ -37,20 +37,21 @@ function readFailureState(path: string): FailureState {
       logger.info("no failure state exists yet. The failure streak starts at zero.");
       return { consecutiveFailures: 0 };
     }
+    logger.error("could not read the failure state.", { path });
     throw error;
   }
 }
 
-function writeFailureState(path: string, state: FailureState): void {
-  writeFileSync(path, `${JSON.stringify(state)}\n`, "utf8");
+async function writeFailureState(path: string, state: FailureState): Promise<void> {
+  await writeFile(path, `${JSON.stringify(state)}\n`, "utf8");
   logger.info("saved the failure streak.", { consecutiveFailures: state.consecutiveFailures });
 }
 
 export async function recordUrlResult(url: string, result: UrlResult): Promise<RecordResult> {
   logger.info("recording the result of one watched page.");
-  const snapshotDirectory = getUrlSnapshotDirectory(url);
+  const snapshotDirectory = await getUrlSnapshotDirectory(url);
   const statePath = join(snapshotDirectory, STATE_FILENAME);
-  const previous = readFailureState(statePath);
+  const previous = await readFailureState(statePath);
   const consecutiveFailures = result === "success" ? 0 : previous.consecutiveFailures + 1;
   logger.info(
     result === "success" ? "page succeeded." : "page failed.",
@@ -77,8 +78,8 @@ export async function recordUrlResult(url: string, result: UrlResult): Promise<R
     });
   }
 
-  mkdirSync(snapshotDirectory, { recursive: true });
-  writeFailureState(statePath, { consecutiveFailures });
+  await mkdir(snapshotDirectory, { recursive: true });
+  await writeFailureState(statePath, { consecutiveFailures });
   return { url, result, consecutiveFailures, notified };
 }
 
