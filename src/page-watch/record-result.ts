@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { APPLICATION_CONFIG } from "../config.ts";
 import { logger } from "../logger.ts";
 import { fail, getUrlSnapshotDirectory } from "../runtime.ts";
 import { createTelegramNotifier } from "../integrations/telegram.ts";
@@ -14,7 +15,6 @@ export type RecordResult = Readonly<{
   notified: boolean;
 }>;
 
-const FAILURE_THRESHOLD = 3;
 const STATE_FILENAME = "failure-state.json";
 
 async function readFailureState(path: string): Promise<FailureState> {
@@ -62,19 +62,22 @@ export async function recordUrlResult(url: string, result: UrlResult): Promise<R
   );
   let notified = false;
 
-  if (consecutiveFailures === FAILURE_THRESHOLD) {
+  if (consecutiveFailures === APPLICATION_CONFIG.pageChecks.failureNotificationThreshold) {
     logger.warn("failure streak reached the notification threshold.", {
       consecutiveFailures,
-      notificationThreshold: FAILURE_THRESHOLD,
+      notificationThreshold: APPLICATION_CONFIG.pageChecks.failureNotificationThreshold,
     });
     const notify = createTelegramNotifier();
     await notify(`Page watch failed for ${url} three times in a row.`);
     notified = true;
   }
-  if (result === "failure" && consecutiveFailures !== FAILURE_THRESHOLD) {
+  if (
+    result === "failure"
+    && consecutiveFailures !== APPLICATION_CONFIG.pageChecks.failureNotificationThreshold
+  ) {
     logger.info("failure streak does not trigger a notification.", {
       consecutiveFailures,
-      notificationThreshold: FAILURE_THRESHOLD,
+      notificationThreshold: APPLICATION_CONFIG.pageChecks.failureNotificationThreshold,
     });
   }
 

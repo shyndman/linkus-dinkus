@@ -3,12 +3,17 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { APPLICATION_CONFIG } from "../config.ts";
 import { logger } from "../logger.ts";
 import { fail } from "../runtime.ts";
+const TIMER_UNIT_PATH = resolve(
+  homedir(),
+  ".config",
+  "systemd",
+  "user",
+  APPLICATION_CONFIG.systemd.timerUnitName,
+);
 
-const TIMER_UNIT_NAME = "shoestring-page-watch.timer";
-const SERVICE_UNIT_NAME = "shoestring-page-watch.service";
-const TIMER_UNIT_PATH = resolve(homedir(), ".config", "systemd", "user", TIMER_UNIT_NAME);
 
 export type SyncResult = Readonly<{
   calendarExpressions: readonly string[];
@@ -50,7 +55,7 @@ function buildTimerUnit(calendarExpressions: readonly string[]): string {
     "[Timer]",
     ...schedules,
     "Persistent=true",
-    `Unit=${SERVICE_UNIT_NAME}`,
+    `Unit=${APPLICATION_CONFIG.systemd.serviceUnitName}`,
     "",
     "[Install]",
     "WantedBy=timers.target",
@@ -78,9 +83,9 @@ export function syncSystemdSchedule(calendarExpressions: readonly string[]): Syn
   logger.info("reloading the systemd user manager.");
   runSystemctl(["daemon-reload"]);
   logger.info("enabling the page-watch timer.");
-  runSystemctl(["enable", TIMER_UNIT_NAME]);
+  runSystemctl(["enable", APPLICATION_CONFIG.systemd.timerUnitName]);
   logger.info("restarting the page-watch timer.");
-  runSystemctl(["restart", TIMER_UNIT_NAME]);
+  runSystemctl(["restart", APPLICATION_CONFIG.systemd.timerUnitName]);
   logger.info("page-watch timer is enabled and running with its new schedule.");
   return { calendarExpressions, timerUnitPath: TIMER_UNIT_PATH };
 }

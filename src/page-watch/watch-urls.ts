@@ -1,324 +1,54 @@
-import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { basename, isAbsolute, join, resolve } from "node:path";
+import { basename } from "node:path";
+import { APPLICATION_CONFIG } from "../config.ts";
 import { errorDetail, logger } from "../logger.ts";
-import { createTelegramNotifier } from "../integrations/telegram.ts";
-import { PROJECT_ROOT } from "../runtime.ts";
-import { capturePage } from "../snapshots/capture.ts";
+import type { ChangedComparison, SnapshotComparison } from "../snapshots/compare.ts";
 import {
-  compareSnapshots,
-  type ChangedComparison,
-  type SnapshotComparison,
-} from "../snapshots/compare.ts";
-import { extractSnapshot } from "../snapshots/extract.ts";
-import { collectExpiredSnapshots } from "../snapshots/collect.ts";
-import { recordUrlResult, type UrlResult } from "./record-result.ts";
-import { getUrlState, type UrlStateResult } from "./url-state.ts";
+  NotificationTriggerSchema,
+  WatchedUrlSchema,
+  type HtmlSnapshotPath,
+  type NotificationTrigger,
+  type OrganizationName,
+  type WatchedUrl,
+} from "./domain.ts";
+import { organizationNamePath } from "./organization-name.ts";
+import type { JudgmentResult } from "./judgment.ts";
+import type { PageWatchDependencies } from "./ports.ts";
+import type { UrlStateResult } from "./url-state.ts";
 import {
-  JUDGMENT_RESULT_PATH_ENVIRONMENT_VARIABLE,
-  readJudgmentResult,
-  type JudgmentResult,
-} from "./judgment.ts";
-import {
-  organizationNamePath,
-  readOrganizationName,
-} from "./organization-name.ts";
-import {
-  PAGE_CHECK_CONCURRENCY,
   runConcurrentPageChecks,
   type UrlCheckInput,
   type UrlCheckResult,
 } from "./concurrent-page-checks.ts";
 
-const AGENT_MODEL = "openrouter/z-ai/glm-5.3-flash";
-const SCRIPT_AGENT_MAX_TIME_SECONDS = "900";
-const JUDGE_AGENT_MAX_TIME_SECONDS = "900";
-const HTML_CHANGE_REVIEW_INTERVAL = 5;
-const HTML_CHANGE_COUNT_FILE = "html-change-count.txt";
-const HTML_SNAPSHOT_PATTERN = /^snapshot-\d{8}T\d{6}Z\.html$/;
-const STYLED_OMP_RUNNER_PATH = resolve(PROJECT_ROOT, "src", "integrations", "run-omp-with-styled-output.ts");
-const ORGANIZATION_CAPITALIZATION_INSTRUCTION =
-  "Use standard capitalization unless the source intentionally styles the company name differently.";
-
-type ScriptAgentContext = Readonly<{
-  url: string;
-  snapshotDirectory: string;
-  currentSnapshot: string;
-}>;
-export type ScriptAgentTask = ScriptAgentContext & (
-  | Readonly<{
-    reason: "setup";
-    notificationTrigger: string;
-    organizationNamePath: string;
-  }>
-  | Readonly<{ reason: "fifth-html-change"; notificationTrigger: string }>
-  | Readonly<{ reason: "organization-name"; organizationNamePath: string }>
-);
-export type JudgeAgentTask = Readonly<{
-  url: string;
-  notificationTrigger: string;
-  snapshotDirectory: string;
-  currentSnapshot: string;
-  organizationName: string;
-  comparison: ChangedComparison;
-}>;
-export type UrlWatchOperations = Readonly<{
-  classifyUrl: (url: string) => Promise<UrlStateResult>;
-  capturePage: (url: string) => Promise<string>;
-  extractSnapshot: (snapshot: string) => Promise<string>;
-  compareSnapshots: (snapshotDirectory: string) => Promise<SnapshotComparison>;
-  htmlChanged: (snapshotDirectory: string, currentSnapshot: string) => Promise<boolean>;
-  incrementHtmlChangeCount: (snapshotDirectory: string) => Promise<number>;
-  readOrganizationName: (snapshotDirectory: string) => Promise<string | null>;
-  runScriptAgent: (task: ScriptAgentTask) => Promise<void>;
-  runJudgeAgent: (task: JudgeAgentTask) => Promise<JudgmentResult>;
-  sendNotification: (text: string) => Promise<void>;
-  recordResult: (url: string, result: UrlResult) => Promise<void>;
-  collectExpiredSnapshots: () => Promise<void>;
-}>;
 export type UrlWatchResult = Readonly<{
-  url: string;
-  organizationName: string;
+  url: WatchedUrl;
+  organizationName: OrganizationName;
   state: "set-up" | "baseline" | "unchanged" | "changed";
   htmlChanged: boolean;
   scriptAgentRan: boolean;
   judgment: JudgmentResult | null;
 }>;
 
-type WatchInput = Readonly<{
+export type WatchInput = Readonly<{
   notificationTrigger: string;
   urls: readonly string[];
 }>;
 
-
-function absolutePath(path: string): string {
-  return isAbsolute(path) ? path : resolve(PROJECT_ROOT, path);
-}
-
-export async function htmlChanged(snapshotDirectory: string, currentSnapshot: string): Promise<boolean> {
-  const directory = absolutePath(snapshotDirectory);
-  const currentName = basename(currentSnapshot);
-  const snapshots = (await readdir(directory))
-    .filter((name: string): boolean => HTML_SNAPSHOT_PATTERN.test(name))
-    .sort();
-  logger.info("found HTML snapshots for comparison.", {
-    snapshotCount: snapshots.length,
-    currentSnapshot: currentName,
-  });
-  const currentIndex = snapshots.indexOf(currentName);
-  if (currentIndex === -1) {
-    logger.error("current HTML snapshot is missing.", {
-      currentSnapshot: currentName,
-      snapshotDirectory,
-    });
-    throw new Error(`Current HTML snapshot is absent from ${snapshotDirectory}: ${currentSnapshot}`);
-  }
-  if (currentIndex === 0) {
-    logger.info("current HTML snapshot establishes the baseline.", {
-      currentSnapshot: currentName,
-    });
-    return false;
-  }
-
-  const previousName = snapshots[currentIndex - 1];
-  if (previousName === undefined) return false;
-  const [previous, current] = await Promise.all([
-    readFile(join(directory, previousName)),
-    readFile(join(directory, currentName)),
-  ]);
-  const changed = !previous.equals(current);
-  if (changed) {
-    logger.info("rendered HTML changed.", {
-      currentSnapshot: currentName,
-      previousSnapshot: previousName,
-      currentBytes: current.byteLength,
-      previousBytes: previous.byteLength,
-    });
-  } else {
-    logger.info("rendered HTML did not change.", {
-      currentSnapshot: currentName,
-      previousSnapshot: previousName,
-      bytes: current.byteLength,
-    });
-  }
-  return changed;
-}
-
-export async function incrementHtmlChangeCount(snapshotDirectory: string): Promise<number> {
-  const directory = absolutePath(snapshotDirectory);
-  const countPath = join(directory, HTML_CHANGE_COUNT_FILE);
-  let previous = 0;
-  try {
-    const text = (await readFile(countPath, "utf8")).trim();
-    if (!/^(0|[1-9]\d*)$/.test(text)) {
-      logger.error("html change count is invalid.", { file: HTML_CHANGE_COUNT_FILE });
-      throw new Error(`${countPath} does not contain a nonnegative integer`);
-    }
-    previous = Number(text);
-    logger.info("read the saved HTML change count.", { changeCount: previous });
-  } catch (error: unknown) {
-    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
-    logger.info("no HTML change count exists yet. The count starts at zero.");
-  }
-  const next = previous + 1;
-  await mkdir(directory, { recursive: true });
-  await writeFile(countPath, `${next}\n`, "utf8");
-  logger.info("saved the HTML change count.", { changeCount: next });
-  return next;
-}
-
-async function runOmpAgent(
-  model: string,
-  thinking: "high" | "xhigh",
-  maxTime: string,
-  prompt: string,
-  environment: Readonly<Record<string, string>> = {},
-): Promise<void> {
-  const startedAt = performance.now();
-  logger.info("starting an agent.", { model, timeLimitSeconds: Number(maxTime) });
-  await new Promise<void>((resolveAgent, rejectAgent): void => {
-    const child = spawn(process.execPath, [
-      "--import",
-      "tsx",
-      STYLED_OMP_RUNNER_PATH,
-      "--model", model,
-      `--thinking=${thinking}`,
-      `--max-time=${maxTime}`,
-      "--print",
-      "--mode=text",
-      "--no-session",
-      prompt,
-    ], {
-      cwd: PROJECT_ROOT,
-      env: { ...process.env, ...environment },
-      stdio: ["ignore", "inherit", "inherit"],
-    });
-    let startFailed = false;
-    child.once("error", (error: Error): void => {
-      startFailed = true;
-      logger.error("agent could not start.", { error: error.message });
-      rejectAgent(new Error(`omp failed to start: ${error.message}`));
-    });
-    child.once("close", (status: number | null): void => {
-      if (startFailed) return;
-      if (status !== 0) {
-        logger.error("agent failed.", {
-          durationMilliseconds: Math.round(performance.now() - startedAt),
-          status,
-        });
-        rejectAgent(new Error(`omp failed with exit status ${status}`));
-        return;
-      }
-      resolveAgent();
-    });
-  });
-  logger.info("agent finished.", {
-    durationMilliseconds: Math.round(performance.now() - startedAt),
-  });
-}
-
-async function runScriptAgent(task: ScriptAgentTask): Promise<void> {
-  let action: string;
-  let startMessage: string;
-  let finishMessage: string;
-  switch (task.reason) {
-    case "setup":
-      action = `Create and test the extractor. Save the organization name at organizationNamePath. ${ORGANIZATION_CAPITALIZATION_INSTRUCTION}`;
-      startMessage = "starting extractor setup.";
-      finishMessage = "extractor setup finished.";
-      break;
-    case "fifth-html-change":
-      action = "Examine the saved extractor against the current HTML. Fix and test it only if it is wrong.";
-      startMessage = "starting the scheduled extractor audit.";
-      finishMessage = "extractor audit finished.";
-      break;
-    case "organization-name":
-      action = `Inspect the current HTML and save the organization name at organizationNamePath. ${ORGANIZATION_CAPITALIZATION_INSTRUCTION} Do not edit the extractor or snapshots.`;
-      startMessage = "starting organization-name capture.";
-      finishMessage = "organization-name capture finished.";
-      break;
-  }
-  logger.info(startMessage, { snapshot: basename(task.currentSnapshot) });
-  const prompt = [
-    "Act only as the extractor agent described in AGENTS.md.",
-    action,
-    "Do not evaluate notification conditions and do not send notifications.",
-    `Task: ${JSON.stringify(task)}`,
-  ].join("\n");
-  await runOmpAgent(AGENT_MODEL, "xhigh", SCRIPT_AGENT_MAX_TIME_SECONDS, prompt);
-  logger.info(finishMessage);
-}
-
-async function runJudgeAgent(task: JudgeAgentTask): Promise<JudgmentResult> {
-  logger.info("starting the change judge.", { snapshot: basename(task.currentSnapshot) });
-  const prompt = [
-    "Act only as the change judge described in AGENTS.md.",
-    "Evaluate the supplied Markdown difference against notificationTrigger.",
-    "Submit exactly one result with the submit-judgment tool.",
-    `Task: ${JSON.stringify(task)}`,
-  ].join("\n");
-  const resultDirectory = await mkdtemp(join(tmpdir(), "page-watch-judgment-"));
-  const resultPath = join(resultDirectory, "result.json");
-  try {
-    await runOmpAgent(
-      AGENT_MODEL,
-      "high",
-      JUDGE_AGENT_MAX_TIME_SECONDS,
-      prompt,
-      { [JUDGMENT_RESULT_PATH_ENVIRONMENT_VARIABLE]: resultPath },
-    );
-    try {
-      const judgment = await readJudgmentResult(resultPath);
-      logger.info("change judge finished.", { judgment: judgment.state });
-      return judgment;
-    } catch (error: unknown) {
-      const detail = errorDetail(error);
-      logger.error("could not read the change judgment.", { error: detail });
-      throw new Error(`Could not read the change judgment: ${detail}`);
-    }
-  } finally {
-    await rm(resultDirectory, { recursive: true, force: true });
-  }
-}
-
-
-export const DEFAULT_URL_WATCH_OPERATIONS: UrlWatchOperations = {
-  classifyUrl: getUrlState,
-  capturePage,
-  extractSnapshot,
-  compareSnapshots,
-  htmlChanged,
-  readOrganizationName,
-  incrementHtmlChangeCount,
-  runScriptAgent,
-  runJudgeAgent,
-  sendNotification: async (text: string): Promise<void> => {
-    await createTelegramNotifier()(text);
-  },
-  recordResult: async (url: string, result: UrlResult): Promise<void> => {
-    await recordUrlResult(url, result);
-  },
-  collectExpiredSnapshots: async (): Promise<void> => {
-    await collectExpiredSnapshots();
-  },
-};
-
 async function setUpUrl(
-  url: string,
-  notificationTrigger: string,
+  url: WatchedUrl,
+  notificationTrigger: NotificationTrigger,
   initialState: UrlStateResult,
-  operations: UrlWatchOperations,
+  dependencies: PageWatchDependencies,
 ): Promise<UrlWatchResult> {
   logger.info("setting up a page.", {
     initialState: initialState.state,
     snapshotDirectory: initialState.snapshotDirectory,
   });
-  const currentSnapshot = await operations.capturePage(url);
+  const currentSnapshot = await dependencies.snapshots.capture(url);
   logger.info("captured an HTML snapshot for extractor setup.", {
     snapshot: basename(currentSnapshot),
   });
-  await operations.runScriptAgent({
+  await dependencies.extractorAgent.run({
     reason: "setup",
     url,
     notificationTrigger,
@@ -326,19 +56,19 @@ async function setUpUrl(
     currentSnapshot,
     organizationNamePath: organizationNamePath(initialState.snapshotDirectory),
   });
-  const configured = await operations.classifyUrl(url);
+  const configured = await dependencies.pageState.classify(url);
   logger.info("extractor setup finished.", { state: configured.state });
   if (configured.state !== "configured") throw new Error(`The extractor agent did not configure ${url}`);
-  const organizationName = await operations.readOrganizationName(configured.snapshotDirectory);
+  const organizationName = await dependencies.organizations.read(configured.snapshotDirectory);
   if (organizationName === null) {
     logger.error("extractor setup did not save the organization name.");
     throw new Error(`The extractor agent did not save an organization name for ${url}`);
   }
-  const canonicalSnapshot = await operations.extractSnapshot(currentSnapshot);
+  const canonicalSnapshot = await dependencies.snapshots.extract(currentSnapshot);
   logger.info("created canonical Markdown with the new extractor.", {
     snapshot: basename(canonicalSnapshot),
   });
-  const comparison = await operations.compareSnapshots(configured.snapshotDirectory);
+  const comparison = await dependencies.snapshots.compare(configured.snapshotDirectory);
   logger.info("compared the setup snapshot.", { result: comparison.state });
   if (initialState.state === "new" && comparison.state !== "baseline") {
     throw new Error(`The first canonical snapshot for ${url} was not a baseline`);
@@ -352,89 +82,115 @@ async function setUpUrl(
     judgment: null,
   };
 }
+
 async function auditExtractorAfterHtmlChange(
   didHtmlChange: boolean,
-  url: string,
-  notificationTrigger: string,
-  snapshotDirectory: string,
-  currentSnapshot: string,
-  operations: UrlWatchOperations,
+  url: WatchedUrl,
+  notificationTrigger: NotificationTrigger,
+  urlState: UrlStateResult,
+  currentSnapshot: HtmlSnapshotPath,
+  dependencies: PageWatchDependencies,
 ): Promise<boolean> {
   if (!didHtmlChange) return false;
-  const count = await operations.incrementHtmlChangeCount(snapshotDirectory);
-  const auditDue = count % HTML_CHANGE_REVIEW_INTERVAL === 0;
+  const count = await dependencies.snapshots.incrementHtmlChangeCount(urlState.snapshotDirectory);
+  const auditDue = count % APPLICATION_CONFIG.pageChecks.extractorAuditInterval === 0;
   logger.info(
     auditDue
       ? "html change requires the scheduled extractor audit."
       : "html change does not require an extractor audit.",
-    { changeCount: count, auditInterval: HTML_CHANGE_REVIEW_INTERVAL },
+    {
+      changeCount: count,
+      auditInterval: APPLICATION_CONFIG.pageChecks.extractorAuditInterval,
+    },
   );
   if (!auditDue) return false;
-  await operations.runScriptAgent({
+  await dependencies.extractorAgent.run({
     reason: "fifth-html-change",
     url,
     notificationTrigger,
-    snapshotDirectory,
+    snapshotDirectory: urlState.snapshotDirectory,
     currentSnapshot,
   });
   return true;
 }
 
-
-type OrganizationNameResult = Readonly<{ name: string; agentRan: boolean }>;
+type OrganizationNameResult = Readonly<{ name: OrganizationName; agentRan: boolean }>;
 
 async function getOrganizationName(
-  url: string,
-  snapshotDirectory: string,
-  currentSnapshot: string,
-  operations: UrlWatchOperations,
+  url: WatchedUrl,
+  urlState: UrlStateResult,
+  currentSnapshot: HtmlSnapshotPath,
+  dependencies: PageWatchDependencies,
 ): Promise<OrganizationNameResult> {
-  const savedName = await operations.readOrganizationName(snapshotDirectory);
+  const savedName = await dependencies.organizations.read(urlState.snapshotDirectory);
   if (savedName !== null) return { name: savedName, agentRan: false };
 
-  await operations.runScriptAgent({
+  await dependencies.extractorAgent.run({
     reason: "organization-name",
     url,
-    snapshotDirectory,
+    snapshotDirectory: urlState.snapshotDirectory,
     currentSnapshot,
-    organizationNamePath: organizationNamePath(snapshotDirectory),
+    organizationNamePath: organizationNamePath(urlState.snapshotDirectory),
   });
-  const capturedName = await operations.readOrganizationName(snapshotDirectory);
+  const capturedName = await dependencies.organizations.read(urlState.snapshotDirectory);
   if (capturedName === null) {
     logger.error("the organization-name agent did not save a name.");
     throw new Error(`The organization-name agent did not save a name for ${url}`);
   }
   return { name: capturedName, agentRan: true };
 }
+type ChangedPage = Readonly<{
+  url: WatchedUrl;
+  notificationTrigger: NotificationTrigger;
+  snapshotDirectory: UrlStateResult["snapshotDirectory"];
+  currentSnapshot: HtmlSnapshotPath;
+  organizationName: OrganizationName;
+  comparison: ChangedComparison;
+}>;
+
+async function judgeChangedPage(
+  page: ChangedPage,
+  dependencies: PageWatchDependencies,
+): Promise<JudgmentResult> {
+  logger.info("canonical Markdown changed. The change judge is required.", {
+    differenceBytes: Buffer.byteLength(page.comparison.diff),
+  });
+  const judgment = await dependencies.changeJudge.run(page);
+  if (judgment.state === "failure") {
+    logger.info("sending the failed change judgment.");
+    await dependencies.notifier.send(judgment.text);
+    logger.info("sent the failed change judgment.");
+  }
+  return judgment;
+}
+
 
 async function watchConfiguredUrl(
-  url: string,
-  notificationTrigger: string,
+  url: WatchedUrl,
+  notificationTrigger: NotificationTrigger,
   urlState: UrlStateResult,
-  operations: UrlWatchOperations,
+  dependencies: PageWatchDependencies,
 ): Promise<UrlWatchResult> {
   logger.info("checking a configured page.", { snapshotDirectory: urlState.snapshotDirectory });
-  const currentSnapshot = await operations.capturePage(url);
+  const currentSnapshot = await dependencies.snapshots.capture(url);
   logger.info("captured an HTML snapshot.", { snapshot: basename(currentSnapshot) });
-  const organization = await getOrganizationName(
-    url,
+  const organization = await getOrganizationName(url, urlState, currentSnapshot, dependencies);
+  const didHtmlChange = await dependencies.snapshots.htmlChanged(
     urlState.snapshotDirectory,
     currentSnapshot,
-    operations,
   );
-  const didHtmlChange = await operations.htmlChanged(urlState.snapshotDirectory, currentSnapshot);
   const extractorAuditRan = await auditExtractorAfterHtmlChange(
     didHtmlChange,
     url,
     notificationTrigger,
-    urlState.snapshotDirectory,
+    urlState,
     currentSnapshot,
-    operations,
+    dependencies,
   );
 
-  const canonicalSnapshot = await operations.extractSnapshot(currentSnapshot);
+  const canonicalSnapshot = await dependencies.snapshots.extract(currentSnapshot);
   logger.info("created canonical Markdown.", { snapshot: basename(canonicalSnapshot) });
-  const comparison = await operations.compareSnapshots(urlState.snapshotDirectory);
+  const comparison: SnapshotComparison = await dependencies.snapshots.compare(urlState.snapshotDirectory);
   logger.info("compared the canonical Markdown.", { result: comparison.state });
   if (comparison.state !== "changed") {
     logger.info("change judge is not needed.");
@@ -448,22 +204,14 @@ async function watchConfiguredUrl(
     };
   }
 
-  logger.info("canonical Markdown changed. The change judge is required.", {
-    differenceBytes: Buffer.byteLength(comparison.diff),
-  });
-  const judgment = await operations.runJudgeAgent({
+  const judgment = await judgeChangedPage({
     url,
     notificationTrigger,
     snapshotDirectory: urlState.snapshotDirectory,
     currentSnapshot,
     organizationName: organization.name,
     comparison,
-  });
-  if (judgment.state === "failure") {
-    logger.info("sending the failed change judgment.");
-    await operations.sendNotification(judgment.text);
-    logger.info("sent the failed change judgment.");
-  }
+  }, dependencies);
   return {
     url,
     organizationName: organization.name,
@@ -474,28 +222,45 @@ async function watchConfiguredUrl(
   };
 }
 
+async function watchTypedUrl(
+  url: WatchedUrl,
+  notificationTrigger: NotificationTrigger,
+  dependencies: PageWatchDependencies,
+): Promise<UrlWatchResult> {
+  const state = await dependencies.pageState.classify(url);
+  logger.info("classified the page.", {
+    state: state.state,
+    snapshotDirectory: state.snapshotDirectory,
+  });
+  return state.state === "configured"
+    ? watchConfiguredUrl(url, notificationTrigger, state, dependencies)
+    : setUpUrl(url, notificationTrigger, state, dependencies);
+}
+
 export async function watchUrl(
   url: string,
   notificationTrigger: string,
-  operations: UrlWatchOperations = DEFAULT_URL_WATCH_OPERATIONS,
+  dependencies: PageWatchDependencies,
 ): Promise<UrlWatchResult> {
-  const state = await operations.classifyUrl(url);
-  logger.info("classified the page.", { state: state.state, snapshotDirectory: state.snapshotDirectory });
-  return state.state === "configured"
-    ? watchConfiguredUrl(url, notificationTrigger, state, operations)
-    : setUpUrl(url, notificationTrigger, state, operations);
+  return watchTypedUrl(
+    WatchedUrlSchema.parse(url),
+    NotificationTriggerSchema.parse(notificationTrigger),
+    dependencies,
+  );
 }
 
-
-async function runUrlCheck(input: UrlCheckInput, operations: UrlWatchOperations): Promise<UrlCheckResult> {
+async function runUrlCheck(
+  input: UrlCheckInput,
+  dependencies: PageWatchDependencies,
+): Promise<UrlCheckResult> {
   logger.info("starting a page check.", {
     url: input.url,
     pageNumber: input.pageNumber,
     pageCount: input.pageCount,
   });
   try {
-    const result = await watchUrl(input.url, input.notificationTrigger, operations);
-    await operations.recordResult(input.url, "success");
+    const result = await watchTypedUrl(input.url, input.notificationTrigger, dependencies);
+    await dependencies.pageState.recordResult(input.url, "success");
     logger.info("page check finished.", {
       pageNumber: input.pageNumber,
       result: result.state,
@@ -505,7 +270,7 @@ async function runUrlCheck(input: UrlCheckInput, operations: UrlWatchOperations)
     const detail = errorDetail(error);
     logger.error("page check failed.", { pageNumber: input.pageNumber, error: detail });
     try {
-      await operations.recordResult(input.url, "failure");
+      await dependencies.pageState.recordResult(input.url, "failure");
       logger.info("recorded the page-check failure.", { pageNumber: input.pageNumber });
       return { state: "failure", error: detail, recordError: null };
     } catch (recordError: unknown) {
@@ -519,7 +284,6 @@ async function runUrlCheck(input: UrlCheckInput, operations: UrlWatchOperations)
   }
 }
 
-
 function consolidatedJudgmentMessage(results: readonly UrlWatchResult[]): string | null {
   const sections = results.flatMap((result: UrlWatchResult): readonly string[] => {
     if (result.judgment?.state !== "matched") return [];
@@ -530,10 +294,10 @@ function consolidatedJudgmentMessage(results: readonly UrlWatchResult[]): string
 
 export async function watchUrls(
   input: WatchInput,
-  operations: UrlWatchOperations = DEFAULT_URL_WATCH_OPERATIONS,
+  dependencies: PageWatchDependencies,
 ): Promise<readonly UrlWatchResult[]> {
   logger.info("starting page checks.", {
-    concurrency: PAGE_CHECK_CONCURRENCY,
+    concurrency: APPLICATION_CONFIG.pageChecks.concurrency,
     pageCount: input.urls.length,
   });
   let results: readonly UrlWatchResult[] = [];
@@ -541,7 +305,7 @@ export async function watchUrls(
   try {
     const outcome = await runConcurrentPageChecks(
       input,
-      async (checkInput: UrlCheckInput): Promise<UrlCheckResult> => runUrlCheck(checkInput, operations),
+      async (checkInput: UrlCheckInput): Promise<UrlCheckResult> => runUrlCheck(checkInput, dependencies),
     );
     results = outcome.results;
     failures.push(...outcome.failures);
@@ -551,10 +315,8 @@ export async function watchUrls(
   const judgmentMessage = consolidatedJudgmentMessage(results);
   if (judgmentMessage !== null) {
     try {
-      logger.info("sending the consolidated change judgments.", {
-        characters: judgmentMessage.length,
-      });
-      await operations.sendNotification(judgmentMessage);
+      logger.info("sending the consolidated change judgments.", { characters: judgmentMessage.length });
+      await dependencies.notifier.send(judgmentMessage);
       logger.info("sent the consolidated change judgments.");
     } catch (error: unknown) {
       const detail = errorDetail(error);
@@ -563,7 +325,7 @@ export async function watchUrls(
     }
   }
   try {
-    await operations.collectExpiredSnapshots();
+    await dependencies.snapshots.collectExpired();
   } catch (error: unknown) {
     const detail = errorDetail(error);
     logger.error("snapshot garbage collection failed.", { error: detail });

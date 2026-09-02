@@ -2,11 +2,11 @@ import { createHash } from "node:crypto";
 import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { basename, join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
+import { APPLICATION_CONFIG } from "../config.ts";
 import { getSiteLogTag, logger } from "../logger.ts";
 import { PROJECT_ROOT, fail, getUrlSnapshotDirectory, runTool } from "../runtime.ts";
 
 const OUTER_HTML_EXPRESSION = "document.documentElement.outerHTML";
-const RENDER_SETTLE_MILLISECONDS = 10_000;
 const CONTENT_HASH_ALGORITHM = "sha256";
 
 function utcTimestamp(date: Date): string {
@@ -55,11 +55,15 @@ export async function capturePage(url: string): Promise<string> {
   const sessionArguments = ["--session", browserSession] as const;
   await mkdir(snapshotDirectory, { recursive: true });
   logger.info("snapshot directory is ready. The browser will settle before capture.", {
-    settleMilliseconds: RENDER_SETTLE_MILLISECONDS,
+    settleMilliseconds: APPLICATION_CONFIG.snapshots.renderSettleMilliseconds,
   });
   try {
     await runTool("bin/camou", [...sessionArguments, "open", url]);
-    await runTool("bin/camou", [...sessionArguments, "wait", String(RENDER_SETTLE_MILLISECONDS)]);
+    await runTool("bin/camou", [
+      ...sessionArguments,
+      "wait",
+      String(APPLICATION_CONFIG.snapshots.renderSettleMilliseconds),
+    ]);
     logger.info("rendered page settled. Reading the document HTML.");
 
     const html = await runTool("bin/camou", [...sessionArguments, "eval", OUTER_HTML_EXPRESSION]);

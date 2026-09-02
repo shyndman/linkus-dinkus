@@ -5,23 +5,23 @@ import { pathToFileURL } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { z } from "zod";
+import { APPLICATION_CONFIG } from "../config.ts";
 import { errorDetail, logger } from "../logger.ts";
 import { PROJECT_ROOT, fail } from "../runtime.ts";
 import { syncSystemdSchedule } from "../systemd/sync-schedule.ts";
+import { createDefaultPageWatchDependencies } from "./default-dependencies.ts";
+import {
+  NotificationTriggerSchema,
+  WatchedUrlSchema,
+  type WatchedUrl,
+} from "./domain.ts";
+import type { ConfigurationSource, PageWatchConfiguration } from "./ports.ts";
 import { watchUrls } from "./watch-urls.ts";
 
-const SPREADSHEET_ID = "1885pAekZfP__9yGRXhCJU5_N8jAzoXUi6IyHaPf149E";
 const MCP_CONFIG_PATH = resolve(PROJECT_ROOT, ".omp", "mcp.json");
 const POLL_FREQUENCY_INPUT_PATH = resolve(PROJECT_ROOT, "snapshots", "poll-frequency-input.txt");
-const SCHEDULE_MODEL = "openrouter/z-ai/glm-5.3-flash";
-const SCHEDULE_MODEL_MAX_TIME_SECONDS = "60";
 const DATE_FORMAT = "+%b %-d, %-I:%M %p";
 
-export type PageWatchConfiguration = Readonly<{
-  notificationTrigger: string;
-  pollFrequency: string;
-  urls: readonly string[];
-}>;
 
 
 const McpConfigurationSchema = z.object({
@@ -112,13 +112,9 @@ function readSingleTextCell(text: string, rangeName: string): string {
   return cells[0][0];
 }
 
-function readUrlCells(text: string): readonly string[] {
-  const cells = parseCells(text, "urls");
-  const values = cells.flat();
-  if (!values.every((value: unknown): value is string => typeof value === "string")) {
-    throw new Error("urls must contain only text cells");
-  }
-  return values;
+function readUrlCells(text: string): readonly WatchedUrl[] {
+  const cells = parseCells(text, APPLICATION_CONFIG.googleSheets.urlsRange);
+  return cells.flat().map((value: unknown): WatchedUrl => WatchedUrlSchema.parse(value));
 }
 
 function getHostDateTime(): string {
@@ -134,20 +130,28 @@ function getHostDateTime(): string {
 export async function readConfigurationAndWriteTimestamp(client: ToolClient): Promise<PageWatchConfiguration> {
   logger.info("reading the notification rule, poll schedule, and watched-page list from Google Sheets.");
   const sheetArguments = (rangeName: string): Readonly<Record<string, string>> => ({
-    spreadsheet_id: SPREADSHEET_ID,
+    spreadsheet_id: APPLICATION_CONFIG.googleSheets.spreadsheetId,
     range_notation: rangeName,
   });
   const [notificationTriggerText, pollFrequencyText, urlsText] = await Promise.all([
-    callSheetTool(client, "read_cells", sheetArguments("notificationTrigger")),
-    callSheetTool(client, "read_cells", sheetArguments("pollFrequency")),
-    callSheetTool(client, "read_cells", sheetArguments("urls")),
+    callSheetTool(
+      client,
+      "read_cells",
+      sheetArguments(APPLICATION_CONFIG.googleSheets.notificationTriggerRange),
+    ),
+    callSheetTool(
+      client,
+      "read_cells",
+      sheetArguments(APPLICATION_CONFIG.googleSheets.pollFrequencyRange),
+    ),
+    callSheetTool(client, "read_cells", sheetArguments(APPLICATION_CONFIG.googleSheets.urlsRange)),
   ]);
   logger.info("Google Sheets returned all three configuration ranges.");
 
   const dateTime = getHostDateTime();
   await callSheetTool(client, "write_cells", {
-    spreadsheet_id: SPREADSHEET_ID,
-    range_notation: "lastCheckDateTime",
+    spreadsheet_id: APPLICATION_CONFIG.googleSheets.spreadsheetId,
+    range_notation: APPLICATION_CONFIG.googleSheets.lastCheckDateTimeRange,
     values: JSON.stringify([[dateTime]]),
   });
   logger.info("updated the last-check cell.", { dateTime });
@@ -155,8 +159,16 @@ export async function readConfigurationAndWriteTimestamp(client: ToolClient): Pr
   const urls = readUrlCells(urlsText);
   logger.info("loaded the watched pages from Google Sheets.", { pageCount: urls.length });
   return {
-    notificationTrigger: readSingleTextCell(notificationTriggerText, "notificationTrigger"),
-    pollFrequency: readSingleTextCell(pollFrequencyText, "pollFrequency"),
+    notificationTrigger: NotificationTriggerSchema.parse(
+      readSingleTextCell(
+        notificationTriggerText,
+        APPLICATION_CONFIG.googleSheets.notificationTriggerRange,
+      ),
+    ),
+    pollFrequency: readSingleTextCell(
+      pollFrequencyText,
+      APPLICATION_CONFIG.googleSheets.pollFrequencyRange,
+    ),
     urls,
   };
 }
@@ -259,9 +271,9 @@ function getCalendarExpressions(pollFrequency: string, validationError: string |
     readSystemdTimeDocumentation(),
   );
   const output = runOmp([
-    "--model", SCHEDULE_MODEL,
+    "--model", APPLICATION_CONFIG.agents.model,
     "--thinking=off",
-    `--max-time=${SCHEDULE_MODEL_MAX_TIME_SECONDS}`,
+    `--max-time=${APPLICATION_CONFIG.agents.scheduleMaxTimeSeconds}`,
     "--print",
     "--mode=text",
     "--no-tools",
@@ -343,6 +355,14 @@ export function syncPollFrequency(pollFrequency: string, dependencies: PollFrequ
   logger.info("saved the poll schedule after the timer update succeeded.");
   return true;
 }
+function createGoogleSheetsConfigurationSource(client: ToolClient): ConfigurationSource {
+  return {
+    readAndRecordCheck: async (): Promise<PageWatchConfiguration> => (
+      readConfigurationAndWriteTimestamp(client)
+    ),
+  };
+}
+
 
 
 async function main(): Promise<void> {
@@ -354,15 +374,19 @@ async function main(): Promise<void> {
   try {
     await client.connect(transport);
     logger.info("connected to Google Sheets.");
-    const configuration = await readConfigurationAndWriteTimestamp(client);
+    const configurationSource = createGoogleSheetsConfigurationSource(client);
+    const configuration = await configurationSource.readAndRecordCheck();
     syncPollFrequency(configuration.pollFrequency);
     logger.info("closing the Google Sheets connection before page checks start.");
     await client.close();
     logger.info("closed the Google Sheets connection.");
-    await watchUrls({
-      notificationTrigger: configuration.notificationTrigger,
-      urls: configuration.urls,
-    });
+    await watchUrls(
+      {
+        notificationTrigger: configuration.notificationTrigger,
+        urls: configuration.urls,
+      },
+      createDefaultPageWatchDependencies(),
+    );
     logger.info("finished all page checks.", { pageCount: configuration.urls.length });
   } catch (error: unknown) {
     await client.close().catch((closeError: unknown): void => {

@@ -1,17 +1,23 @@
+import { APPLICATION_CONFIG } from "../config.ts";
 import { createHash } from "node:crypto";
 import { errorDetail, logger, withSiteLogTag } from "../logger.ts";
+import {
+  NotificationTriggerSchema,
+  WatchedUrlSchema,
+  type NotificationTrigger,
+  type WatchedUrl,
+} from "./domain.ts";
 import type { UrlWatchResult } from "./watch-urls.ts";
 
-export const PAGE_CHECK_CONCURRENCY = 3;
 const URL_LOG_TAG_LENGTH = 3;
 const URL_LOG_TAG_RADIX = 26;
 const LOWERCASE_A_CODE_POINT = 97;
 
 export type UrlCheckInput = Readonly<{
-  notificationTrigger: string;
+  notificationTrigger: NotificationTrigger;
   pageCount: number;
   pageNumber: number;
-  url: string;
+  url: WatchedUrl;
 }>;
 export type UrlCheckResult =
   | Readonly<{ state: "success"; result: UrlWatchResult }>
@@ -53,6 +59,7 @@ export async function runConcurrentPageChecks(
   checkRunner: UrlCheckRunner,
 ): Promise<ConcurrentPageCheckResult> {
   const outcomes: Array<UrlCheckResult | undefined> = new Array(input.urls.length);
+  const notificationTrigger = NotificationTriggerSchema.parse(input.notificationTrigger);
   let nextIndex = 0;
   async function runNext(): Promise<void> {
     while (nextIndex < input.urls.length) {
@@ -61,15 +68,15 @@ export async function runConcurrentPageChecks(
       const url = input.urls[index];
       if (url === undefined) throw new Error(`No URL exists at page index ${index}`);
       const checkInput: UrlCheckInput = {
-        notificationTrigger: input.notificationTrigger,
+        notificationTrigger,
         pageCount: input.urls.length,
         pageNumber: index + 1,
-        url,
+        url: WatchedUrlSchema.parse(url),
       };
       outcomes[index] = await runPageCheck(checkInput, checkRunner);
     }
   }
-  const checkCount = Math.min(PAGE_CHECK_CONCURRENCY, input.urls.length);
+  const checkCount = Math.min(APPLICATION_CONFIG.pageChecks.concurrency, input.urls.length);
   await Promise.all(Array.from({ length: checkCount }, runNext));
 
   const results: UrlWatchResult[] = [];

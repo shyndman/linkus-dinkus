@@ -2,12 +2,13 @@ import { access, constants } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
 import { logger } from "../logger.ts";
+import { SnapshotDirectorySchema, type SnapshotDirectory } from "./domain.ts";
 import { PROJECT_ROOT, fail, getUrlSnapshotDirectory, pathExists } from "../runtime.ts";
 
 export type UrlState = "new" | "configured" | "incomplete";
 export type UrlStateResult = Readonly<{
   state: UrlState;
-  snapshotDirectory: string;
+  snapshotDirectory: SnapshotDirectory;
 }>;
 
 export async function getUrlState(url: string): Promise<UrlStateResult> {
@@ -29,7 +30,10 @@ export async function getUrlState(url: string): Promise<UrlStateResult> {
     state,
     snapshotDirectory: relativeSnapshotDirectory,
   });
-  return { state, snapshotDirectory: relativeSnapshotDirectory };
+  return {
+    state,
+    snapshotDirectory: SnapshotDirectorySchema.parse(relativeSnapshotDirectory),
+  };
 }
 
 async function main(): Promise<void> {

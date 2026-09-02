@@ -4,22 +4,29 @@ import { join } from "node:path";
 import test from "node:test";
 import { tmpdir } from "node:os";
 import type { SnapshotComparison } from "../src/snapshots/compare.ts";
+import { htmlChanged, incrementHtmlChangeCount } from "../src/snapshots/change-tracking.ts";
+import {
+  CanonicalSnapshotPathSchema,
+  HtmlSnapshotPathSchema,
+  OrganizationNameSchema,
+  SnapshotDirectorySchema,
+} from "../src/page-watch/domain.ts";
 import {
   readJudgmentResult,
   type JudgmentResult,
 } from "../src/page-watch/judgment.ts";
 import { readOrganizationName as readSavedOrganizationName } from "../src/page-watch/organization-name.ts";
-import {
-  htmlChanged,
-  incrementHtmlChangeCount,
-  watchUrl,
-  watchUrls,
-  type UrlWatchOperations,
-} from "../src/page-watch/watch-urls.ts";
+import type {
+  JudgeAgentTask,
+  PageWatchDependencies,
+  ScriptAgentTask,
+} from "../src/page-watch/ports.ts";
+import { watchUrl, watchUrls } from "../src/page-watch/watch-urls.ts";
 import {
   runConcurrentPageChecks,
   urlLogTag,
 } from "../src/page-watch/concurrent-page-checks.ts";
+import type { UrlState } from "../src/page-watch/url-state.ts";
 
 const URL = "https://example.com/jobs";
 const SNAPSHOT_DIRECTORY = "snapshots/example";
@@ -37,53 +44,95 @@ const CHANGED_COMPARISON: SnapshotComparison = {
   diff: "+New job",
 };
 
-function makeOperations(
+type DependencyOverrides = Readonly<{
+  classifyUrl: (url: string) => Promise<Readonly<{ state: UrlState; snapshotDirectory: string }>>;
+  capturePage: (url: string) => Promise<string>;
+  extractSnapshot: (snapshot: string) => Promise<string>;
+  compareSnapshots: (snapshotDirectory: string) => Promise<SnapshotComparison>;
+  htmlChanged: (snapshotDirectory: string, currentSnapshot: string) => Promise<boolean>;
+  incrementHtmlChangeCount: (snapshotDirectory: string) => Promise<number>;
+  readOrganizationName: (snapshotDirectory: string) => Promise<string | null>;
+  runScriptAgent: (task: ScriptAgentTask) => Promise<void>;
+  runJudgeAgent: (task: JudgeAgentTask) => Promise<JudgmentResult>;
+  sendNotification: (text: string) => Promise<void>;
+  recordResult: (url: string, result: "success" | "failure") => Promise<void>;
+  collectExpiredSnapshots: () => Promise<void>;
+}>;
+
+function makeDependencies(
   calls: string[],
-  overrides: Partial<UrlWatchOperations> = {},
-): UrlWatchOperations {
+  overrides: Partial<DependencyOverrides> = {},
+): PageWatchDependencies {
+  const classifyUrl = overrides.classifyUrl ?? (async () => {
+    calls.push("classify");
+    return { state: "configured" as const, snapshotDirectory: SNAPSHOT_DIRECTORY };
+  });
+  const capturePage = overrides.capturePage ?? (async () => {
+    calls.push("capture");
+    return CURRENT_SNAPSHOT;
+  });
+  const extractSnapshot = overrides.extractSnapshot ?? (async () => {
+    calls.push("extract");
+    return CURRENT_SNAPSHOT.replace(/\.html$/, ".md");
+  });
+  const compareSnapshots = overrides.compareSnapshots ?? (async () => {
+    calls.push("compare-markdown");
+    return UNCHANGED_COMPARISON;
+  });
+  const compareHtml = overrides.htmlChanged ?? (async () => {
+    calls.push("compare-html");
+    return false;
+  });
+  const incrementCount = overrides.incrementHtmlChangeCount ?? (async () => {
+    calls.push("increment-html-count");
+    return 1;
+  });
+  const readName = overrides.readOrganizationName ?? (async () => "Example Company");
+  const runScriptAgent = overrides.runScriptAgent ?? (async () => {
+    calls.push("script-agent");
+  });
+  const runJudgeAgent = overrides.runJudgeAgent ?? (async () => {
+    calls.push("judge-agent");
+    return { state: "not-matched" as const };
+  });
+  const sendNotification = overrides.sendNotification ?? (async (text: string) => {
+    calls.push(`send-notification:${text}`);
+  });
+  const recordResult = overrides.recordResult ?? (async (_url: string, result: "success" | "failure") => {
+    calls.push(`record-${result}`);
+  });
+  const collectExpired = overrides.collectExpiredSnapshots ?? (async () => {
+    calls.push("collect-expired-snapshots");
+  });
+
   return {
-    classifyUrl: async (): Promise<Readonly<{ state: "configured"; snapshotDirectory: string }>> => {
-      calls.push("classify");
-      return { state: "configured", snapshotDirectory: SNAPSHOT_DIRECTORY };
+    pageState: {
+      classify: async (url) => {
+        const result = await classifyUrl(url);
+        return {
+          state: result.state,
+          snapshotDirectory: SnapshotDirectorySchema.parse(result.snapshotDirectory),
+        };
+      },
+      recordResult,
     },
-    capturePage: async (): Promise<string> => {
-      calls.push("capture");
-      return CURRENT_SNAPSHOT;
+    snapshots: {
+      capture: async (url) => HtmlSnapshotPathSchema.parse(await capturePage(url)),
+      extract: async (snapshot) => CanonicalSnapshotPathSchema.parse(await extractSnapshot(snapshot)),
+      compare: compareSnapshots,
+      htmlChanged: compareHtml,
+      incrementHtmlChangeCount: incrementCount,
+      collectExpired,
     },
-    extractSnapshot: async (): Promise<string> => {
-      calls.push("extract");
-      return CURRENT_SNAPSHOT.replace(/\.html$/, ".md");
+    organizations: {
+      read: async (snapshotDirectory) => {
+        const name = await readName(snapshotDirectory);
+        return name === null ? null : OrganizationNameSchema.parse(name);
+      },
     },
-    compareSnapshots: async (): Promise<SnapshotComparison> => {
-      calls.push("compare-markdown");
-      return UNCHANGED_COMPARISON;
-    },
-    htmlChanged: async (): Promise<boolean> => {
-      calls.push("compare-html");
-      return false;
-    },
-    incrementHtmlChangeCount: async (): Promise<number> => {
-      calls.push("increment-html-count");
-      return 1;
-    },
-    readOrganizationName: async (): Promise<string> => "Example Company",
-    runScriptAgent: async (): Promise<void> => {
-      calls.push("script-agent");
-    },
-    runJudgeAgent: async (): Promise<JudgmentResult> => {
-      calls.push("judge-agent");
-      return { state: "not-matched" };
-    },
-    sendNotification: async (text: string): Promise<void> => {
-      calls.push(`send-notification:${text}`);
-    },
-    recordResult: async (_url: string, result: "success" | "failure"): Promise<void> => {
-      calls.push(`record-${result}`);
-    },
-    collectExpiredSnapshots: async (): Promise<void> => {
-      calls.push("collect-expired-snapshots");
-    },
-    ...overrides,
+    extractorAgent: { run: runScriptAgent },
+    changeJudge: { run: runJudgeAgent },
+    notifier: { send: sendNotification },
   };
 }
 
@@ -117,7 +166,7 @@ test("persists a separate HTML-change count in the URL snapshot directory", asyn
 
 test("runs no agent when HTML and Markdown are unchanged", async (): Promise<void> => {
   const calls: string[] = [];
-  const result = await watchUrl(URL, "notify for new jobs", makeOperations(calls));
+  const result = await watchUrl(URL, "notify for new jobs", makeDependencies(calls));
 
   assert.deepEqual(result, {
     url: URL,
@@ -132,7 +181,7 @@ test("runs no agent when HTML and Markdown are unchanged", async (): Promise<voi
 
 test("runs the script agent on every fifth HTML change", async (): Promise<void> => {
   const calls: string[] = [];
-  const operations = makeOperations(calls, {
+  const operations = makeDependencies(calls, {
     htmlChanged: async (): Promise<boolean> => {
       calls.push("compare-html");
       return true;
@@ -160,7 +209,7 @@ test("runs the script agent on every fifth HTML change", async (): Promise<void>
 
 test("runs both agents when the fifth HTML change changes Markdown", async (): Promise<void> => {
   const calls: string[] = [];
-  const operations = makeOperations(calls, {
+  const operations = makeDependencies(calls, {
     htmlChanged: async (): Promise<boolean> => {
       calls.push("compare-html");
       return true;
@@ -193,7 +242,7 @@ test("runs both agents when the fifth HTML change changes Markdown", async (): P
 
 test("runs only the judge when Markdown changes before the fifth HTML change", async (): Promise<void> => {
   const calls: string[] = [];
-  const operations = makeOperations(calls, {
+  const operations = makeDependencies(calls, {
     htmlChanged: async (): Promise<boolean> => true,
     incrementHtmlChangeCount: async (): Promise<number> => 3,
     compareSnapshots: async (): Promise<SnapshotComparison> => CHANGED_COMPARISON,
@@ -208,7 +257,7 @@ test("runs only the judge when Markdown changes before the fifth HTML change", a
 test("returns matched judgment text without sending it", async (): Promise<void> => {
   const calls: string[] = [];
   const text = "New role: Engineer\nhttps://example.com/jobs/engineer";
-  const operations = makeOperations(calls, {
+  const operations = makeDependencies(calls, {
     compareSnapshots: async (): Promise<SnapshotComparison> => CHANGED_COMPARISON,
     runJudgeAgent: async (): Promise<JudgmentResult> => ({ state: "matched", text }),
   });
@@ -222,7 +271,7 @@ test("returns matched judgment text without sending it", async (): Promise<void>
 test("sends failure judgment text and keeps the URL check successful", async (): Promise<void> => {
   const calls: string[] = [];
   const text = "The extractor omitted the job links.";
-  const operations = makeOperations(calls, {
+  const operations = makeDependencies(calls, {
     compareSnapshots: async (): Promise<SnapshotComparison> => CHANGED_COMPARISON,
     runJudgeAgent: async (): Promise<JudgmentResult> => ({ state: "failure", text }),
   });
@@ -238,7 +287,7 @@ test("sends one consolidated message with organization sections", async (): Prom
   const calls: string[] = [];
   const firstUrl = `${URL}/first`;
   const secondUrl = `${URL}/second`;
-  const operations = makeOperations(calls, {
+  const operations = makeDependencies(calls, {
     classifyUrl: async (url: string): Promise<Readonly<{ state: "configured"; snapshotDirectory: string }>> => ({
       state: "configured",
       snapshotDirectory: url === firstUrl ? "snapshots/first" : "snapshots/second",
@@ -268,7 +317,7 @@ test("sends matched judgments when another page check fails", async (): Promise<
   const calls: string[] = [];
   const matchedUrl = `${URL}/matched`;
   const failedUrl = `${URL}/failed`;
-  const operations = makeOperations(calls, {
+  const operations = makeDependencies(calls, {
     classifyUrl: async (url: string): Promise<Readonly<{ state: "configured"; snapshotDirectory: string }>> => ({
       state: "configured",
       snapshotDirectory: url === failedUrl ? "snapshots/failed" : "snapshots/matched",
@@ -302,7 +351,7 @@ test("sends matched judgments when another page check fails", async (): Promise<
 test("backfills an organization name without extractor setup", async (): Promise<void> => {
   const calls: string[] = [];
   let nameReadCount = 0;
-  const operations = makeOperations(calls, {
+  const operations = makeDependencies(calls, {
     readOrganizationName: async (): Promise<string | null> => {
       nameReadCount += 1;
       return nameReadCount === 1 ? null : "Backfilled Organization";
@@ -345,7 +394,7 @@ test("rejects an invalid saved judgment", async (): Promise<void> => {
 test("uses the script agent to set up a new URL", async (): Promise<void> => {
   const calls: string[] = [];
   let classification = 0;
-  const operations = makeOperations(calls, {
+  const operations = makeDependencies(calls, {
     classifyUrl: async (): Promise<Readonly<{ state: "new" | "configured"; snapshotDirectory: string }>> => {
       calls.push("classify");
       classification += 1;
@@ -368,7 +417,7 @@ test("uses the script agent to set up a new URL", async (): Promise<void> => {
 
 test("records each URL result exactly once", async (): Promise<void> => {
   const calls: string[] = [];
-  const operations = makeOperations(calls);
+  const operations = makeDependencies(calls);
 
   const results = await watchUrls({ notificationTrigger: "notify for new jobs", urls: [URL] }, operations);
 
@@ -379,7 +428,7 @@ test("records each URL result exactly once", async (): Promise<void> => {
 
 test("collects expired snapshots after a failed poll cycle", async (): Promise<void> => {
   const calls: string[] = [];
-  const operations = makeOperations(calls, {
+  const operations = makeDependencies(calls, {
     capturePage: async (): Promise<never> => {
       throw new Error("capture failed");
     },
@@ -417,7 +466,7 @@ test("runs at most three page checks at one time", async (): Promise<void> => {
         state: "success",
         result: {
           url: input.url,
-          organizationName: "Example Company",
+          organizationName: OrganizationNameSchema.parse("Example Company"),
           state: "unchanged",
           htmlChanged: false,
           scriptAgentRan: false,

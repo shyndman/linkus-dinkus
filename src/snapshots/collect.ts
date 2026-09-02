@@ -5,10 +5,10 @@ import {
   unlink,
 } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
+import { APPLICATION_CONFIG } from "../config.ts";
 import { logger } from "../logger.ts";
 import { pathExists, PROJECT_ROOT } from "../runtime.ts";
 
-const RETENTION_DAYS = 7;
 const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1_000;
 const SNAPSHOT_FILE_PATTERN = /^snapshot-(\d{8}T\d{6}Z)(?:\.draft)?\.(?:html|md)$/;
 const HTML_SNAPSHOT_PATTERN = /^snapshot-\d{8}T\d{6}Z\.html$/;
@@ -72,7 +72,8 @@ export async function collectExpiredSnapshots(
 ): Promise<SnapshotCollectionResult> {
   if (!(await pathExists(snapshotRoot))) return { deletedSnapshots: 0, deletedObjects: 0 };
 
-  const cutoffMilliseconds = now.getTime() - RETENTION_DAYS * MILLISECONDS_PER_DAY;
+  const cutoffMilliseconds = now.getTime()
+    - APPLICATION_CONFIG.snapshots.retentionDays * MILLISECONDS_PER_DAY;
   let deletedSnapshots = 0;
   let deletedObjects = 0;
   for (const entry of await readdir(snapshotRoot, { withFileTypes: true })) {
@@ -82,7 +83,7 @@ export async function collectExpiredSnapshots(
     deletedObjects += result.deletedObjects;
   }
   logger.info("collected expired snapshot data.", {
-    retentionDays: RETENTION_DAYS,
+    retentionDays: APPLICATION_CONFIG.snapshots.retentionDays,
     deletedSnapshots,
     deletedObjects,
   });
