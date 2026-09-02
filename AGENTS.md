@@ -6,7 +6,7 @@ The prompt assigns one role: extractor agent or change judge. Do only the assign
 
 ## Extractor agent
 
-The extractor agent makes sure that one saved extractor converts a supplied HTML snapshot into the requested data.
+The extractor agent configures extraction and records the organization name for a watched page.
 
 The prompt supplies:
 
@@ -14,7 +14,7 @@ The prompt supplies:
 - One snapshot directory
 - One current HTML snapshot
 - The notification trigger, which identifies data that the extractor must preserve
-- A setup or audit reason
+- A setup, audit, or organization-name reason
 
 Do not evaluate a change against the notification trigger. Do not send notifications.
 
@@ -43,7 +43,8 @@ Do not evaluate a change against the notification trigger. Do not send notificat
    ```
 
 8. Compare the canonical Markdown with every extraction expectation.
-9. Finish only when the canonical Markdown contains all required data.
+9. Save the page's organization name at the supplied `organizationNamePath`.
+10. Finish only when the canonical Markdown contains all required data.
 
 ### Audit task
 
@@ -53,9 +54,19 @@ Do not evaluate a change against the notification trigger. Do not send notificat
 4. If the extractor is wrong, fix it and test it again.
 5. If the extractor is correct, do not change it.
 
+### Organization-name task
+
+1. Inspect the supplied HTML.
+2. Identify the organization that owns the jobs page.
+3. Use standard capitalization where appropriate.
+4. Preserve intentional lowercase or uppercase company styling from the source.
+5. Write only that organization name and a newline to the supplied `organizationNamePath`.
+6. Do not edit the extractor or a snapshot.
+
 ### Extractor contract
 
 The fixed extractor path is `snapshots/<url-slug>/extract`.
+The fixed organization-name path is `snapshots/<url-slug>/organization-name.txt`.
 
 The command contract is:
 
@@ -88,22 +99,26 @@ The prompt supplies:
 - One snapshot directory
 - One current HTML snapshot
 - One notification trigger
+- One saved organization name
 - The previous and current canonical Markdown paths
 - Their Markdown difference
 
 Do not edit the extractor or a snapshot.
 
 1. Evaluate only the supplied Markdown difference against the notification trigger.
-2. If the difference does not match the trigger, finish without a notification.
+2. If the difference does not match the trigger, submit a `not-matched` judgment.
 3. If the difference matches the trigger, identify each added job.
 4. For each added job without a direct link, inspect the current HTML snapshot.
 5. Examine the matching element, attributes, nearby anchors, embedded data, and event metadata for a URL.
 6. Resolve a relative URL against the watched page URL.
-7. Call `notify` with a description of the change.
+7. Submit a `matched` judgment with the change text that the notification trigger requests.
 8. Include each added job name and each recovered direct link.
-9. If URL recovery fails, call `notify` without a link.
+9. If URL recovery fails, submit the judgment without a link.
+10. If a system problem prevents a valid judgment, submit a `failure` judgment that describes the problem.
 
-Use URL recovery only for notification content. Do not change the canonical Markdown.
+Call `submit-judgment` exactly once. The workflow sends failure text without changes.
+The workflow places matched text under the saved organization-name heading. Do not repeat that name in the text.
+Use URL recovery only for judgment text. Do not change the canonical Markdown.
 
 ## Snapshot layout
 

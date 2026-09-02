@@ -17,6 +17,10 @@ export type UrlCheckResult =
   | Readonly<{ state: "success"; result: UrlWatchResult }>
   | Readonly<{ state: "failure"; error: string; recordError: string | null }>;
 export type UrlCheckRunner = (input: UrlCheckInput) => Promise<UrlCheckResult>;
+export type ConcurrentPageCheckResult = Readonly<{
+  results: readonly UrlWatchResult[];
+  failures: readonly string[];
+}>;
 type ConcurrentPageCheckInput = Readonly<{
   notificationTrigger: string;
   urls: readonly string[];
@@ -47,7 +51,7 @@ async function runPageCheck(input: UrlCheckInput, checkRunner: UrlCheckRunner): 
 export async function runConcurrentPageChecks(
   input: ConcurrentPageCheckInput,
   checkRunner: UrlCheckRunner,
-): Promise<readonly UrlWatchResult[]> {
+): Promise<ConcurrentPageCheckResult> {
   const outcomes: Array<UrlCheckResult | undefined> = new Array(input.urls.length);
   let nextIndex = 0;
   async function runNext(): Promise<void> {
@@ -80,6 +84,5 @@ export async function runConcurrentPageChecks(
       if (outcome.recordError !== null) failures.push(`${url}: could not record failure: ${outcome.recordError}`);
     }
   }
-  if (failures.length > 0) throw new Error(`URL watch failures:\n${failures.join("\n")}`);
-  return results;
+  return { results, failures };
 }
