@@ -30,7 +30,7 @@ Do not evaluate a change against the notification trigger. Do not send notificat
    bin/camou snapshot -i
    ```
 
-2. Record the visible items, names, counts, and direct links as extraction expectations.
+2. Record the visible items, names, counts, direct links, and job-list container as extraction expectations.
 3. Create a draft Markdown file with Defuddle.
 
    ```sh
@@ -39,24 +39,27 @@ Do not evaluate a change against the notification trigger. Do not send notificat
 
 4. Compare the draft with the extraction expectations.
 5. Inspect the supplied HTML when the draft loses required content or relationships.
-6. Create `snapshots/<url-slug>/extract` and its typed source file.
-7. Run the extractor through the canonical runner.
+6. Identify the page's explicit evidence for zero open jobs.
+7. Treat a missing job list without that evidence as an extraction failure.
+8. Create `snapshots/<url-slug>/extract` and its typed source file.
+9. Run the extractor through the canonical runner.
 
    ```sh
    bin/extract-snapshot "$snapshot"
    ```
 
-8. Compare the canonical Markdown with every extraction expectation.
-9. Save the page's organization name at the supplied `organizationNamePath`.
-10. Finish only when the canonical Markdown contains all required data.
+10. Compare the canonical Markdown with every extraction expectation.
+11. Save the page's organization name at the supplied `organizationNamePath`.
+12. Finish only when the canonical Markdown contains all required data.
 
 ### Audit task
 
 1. Inspect the supplied HTML and the saved extractor.
 2. Run the saved extractor against the supplied HTML.
 3. Compare the output with the data in the HTML.
-4. If the extractor is wrong, fix it and test it again.
-5. If the extractor is correct, do not change it.
+4. Make sure that zero extracted jobs require explicit empty-state evidence from the page.
+5. If the extractor is wrong, fix it and test it again.
+6. If the extractor is correct, do not change it.
 
 ### Organization-name task
 
@@ -88,6 +91,10 @@ The extractor must obey these rules:
 - Return identical output for identical input.
 - Exclude timestamps and run-specific values from the Markdown.
 - Preserve data required by the notification trigger.
+- When jobs exist, write every required job to the Markdown.
+- When the page explicitly states that no jobs exist, write a stable empty-result marker.
+- When zero jobs lack explicit page evidence, write failure details and return a nonzero status.
+- Treat a missing, unloaded, blocked, or changed job-list structure as a failure.
 
 Use Cheerio for HTML inspection and repair. Use `bin/defuddle` when its Markdown output is useful.
 
