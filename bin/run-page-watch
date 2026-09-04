@@ -2,7 +2,7 @@
 set -eu
 
 project_directory=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-PATH="$HOME/.local/bin:$HOME/.local/share/pnpm:/home/linuxbrew/.linuxbrew/bin:$PATH"
+PATH="$HOME/bin:$HOME/.local/bin:$HOME/.local/share/pnpm:/home/linuxbrew/.linuxbrew/bin:$PATH"
 cd "$project_directory"
 export PATH
 exec pnpm exec tsx "$project_directory/src/page-watch/run.ts"
