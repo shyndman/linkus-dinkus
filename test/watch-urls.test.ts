@@ -4,7 +4,11 @@ import { join } from "node:path";
 import test from "node:test";
 import { tmpdir } from "node:os";
 import type { SnapshotComparison } from "../src/snapshots/compare.ts";
-import { htmlChanged, incrementHtmlChangeCount } from "../src/snapshots/change-tracking.ts";
+import {
+  htmlChanged,
+  incrementHtmlChangeCount,
+  rollbackHtmlChangeCount,
+} from "../src/snapshots/change-tracking.ts";
 import {
   CanonicalSnapshotPathSchema,
   HtmlSnapshotPathSchema,
@@ -57,6 +61,9 @@ type DependencyOverrides = Readonly<{
   sendNotification: (text: string) => Promise<void>;
   recordResult: (url: string, result: "success" | "failure") => Promise<void>;
   collectExpiredSnapshots: () => Promise<void>;
+  discardSnapshotAttempt: (snapshot: string) => Promise<void>;
+  rollbackHtmlChangeCount: (snapshotDirectory: string) => Promise<void>;
+  waitForRetry: (milliseconds: number) => Promise<void>;
 }>;
 
 function makeDependencies(
@@ -104,6 +111,16 @@ function makeDependencies(
   const collectExpired = overrides.collectExpiredSnapshots ?? (async () => {
     calls.push("collect-expired-snapshots");
   });
+  const discardAttempt = overrides.discardSnapshotAttempt ?? (async (snapshot: string) => {
+    calls.push(`discard-attempt:${snapshot}`);
+  });
+  const rollbackChangeCount = overrides.rollbackHtmlChangeCount ?? (async (snapshotDirectory: string) => {
+    calls.push(`rollback-html-count:${snapshotDirectory}`);
+  });
+  const waitForRetry = overrides.waitForRetry ?? (async (milliseconds: number) => {
+    calls.push(`wait-for-retry:${milliseconds}`);
+  });
+
 
   return {
     pageState: {
@@ -123,6 +140,8 @@ function makeDependencies(
       htmlChanged: compareHtml,
       incrementHtmlChangeCount: incrementCount,
       collectExpired,
+      discardAttempt,
+      rollbackHtmlChangeCount: rollbackChangeCount,
     },
     organizations: {
       read: async (snapshotDirectory) => {
@@ -133,6 +152,7 @@ function makeDependencies(
     extractorAgent: { run: runScriptAgent },
     changeJudge: { run: runJudgeAgent },
     notifier: { send: sendNotification },
+    retryClock: { wait: waitForRetry },
   };
 }
 
@@ -158,6 +178,8 @@ test("persists a separate HTML-change count in the URL snapshot directory", asyn
     assert.equal(await incrementHtmlChangeCount(directory), 2);
     assert.equal(await incrementHtmlChangeCount(directory), 3);
     assert.equal(await incrementHtmlChangeCount(directory), 4);
+    assert.equal(await incrementHtmlChangeCount(directory), 5);
+    await rollbackHtmlChangeCount(directory);
     assert.equal(await incrementHtmlChangeCount(directory), 5);
   } finally {
     rmSync(directory, { recursive: true, force: true });
@@ -426,6 +448,38 @@ test("records each URL result exactly once", async (): Promise<void> => {
   assert.equal(calls.at(-1), "collect-expired-snapshots");
 });
 
+test("retries a page stream after extraction failures", async (): Promise<void> => {
+  const calls: string[] = [];
+  let extractionAttempts = 0;
+  const dependencies = makeDependencies(calls, {
+    htmlChanged: async (): Promise<boolean> => true,
+    extractSnapshot: async (): Promise<string> => {
+      calls.push("extract");
+      extractionAttempts += 1;
+      if (extractionAttempts < 3) throw new Error("job list was absent");
+      return CURRENT_SNAPSHOT.replace(/\.html$/, ".md");
+    },
+  });
+
+  const results = await watchUrls(
+    { notificationTrigger: "notify for new jobs", urls: [URL] },
+    dependencies,
+  );
+
+  assert.equal(results.length, 1);
+  assert.equal(extractionAttempts, 3);
+  assert.equal(calls.filter((call: string): boolean => call === "classify").length, 3);
+  assert.equal(calls.filter((call: string): boolean => call === "capture").length, 3);
+  assert.equal(calls.filter((call: string): boolean => call.startsWith("discard-attempt:")).length, 2);
+  assert.equal(calls.filter((call: string): boolean => call === "increment-html-count").length, 3);
+  assert.equal(calls.filter((call: string): boolean => call.startsWith("rollback-html-count:")).length, 2);
+  assert.deepEqual(
+    calls.filter((call: string): boolean => call.startsWith("wait-for-retry:")),
+    ["wait-for-retry:10000", "wait-for-retry:10000"],
+  );
+  assert.equal(calls.filter((call: string): boolean => call === "record-success").length, 1);
+});
+
 test("collects expired snapshots after a failed poll cycle", async (): Promise<void> => {
   const calls: string[] = [];
   const operations = makeDependencies(calls, {
@@ -439,6 +493,12 @@ test("collects expired snapshots after a failed poll cycle", async (): Promise<v
     /capture failed/,
   );
   assert.equal(calls.at(-1), "collect-expired-snapshots");
+  assert.equal(calls.filter((call: string): boolean => call === "classify").length, 3);
+  assert.equal(calls.filter((call: string): boolean => call === "record-failure").length, 1);
+  assert.deepEqual(
+    calls.filter((call: string): boolean => call.startsWith("wait-for-retry:")),
+    ["wait-for-retry:10000", "wait-for-retry:10000"],
+  );
 });
 
 test("derives a stable three-letter log tag from the URL", (): void => {

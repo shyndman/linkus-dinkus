@@ -16,6 +16,8 @@ export type ApplicationConfig = Readonly<{
     concurrency: number;
     extractorAuditInterval: number;
     failureNotificationThreshold: number;
+    attemptCount: number;
+    retryDelayMilliseconds: number;
   }>;
   snapshots: Readonly<{
     retentionDays: number;
@@ -45,6 +47,8 @@ export const APPLICATION_CONFIG = {
     concurrency: 3,
     extractorAuditInterval: 5,
     failureNotificationThreshold: 3,
+    attemptCount: 3,
+    retryDelayMilliseconds: 10_000,
   },
   snapshots: {
     retentionDays: 7,

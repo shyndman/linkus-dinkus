@@ -1,9 +1,14 @@
 import { runChangeJudge, runExtractorAgent } from "../integrations/agents.ts";
 import { createPageChangeTelegramNotifier } from "../integrations/telegram.ts";
 import { capturePage } from "../snapshots/capture.ts";
-import { htmlChanged, incrementHtmlChangeCount } from "../snapshots/change-tracking.ts";
+import {
+  htmlChanged,
+  incrementHtmlChangeCount,
+  rollbackHtmlChangeCount,
+} from "../snapshots/change-tracking.ts";
 import { collectExpiredSnapshots } from "../snapshots/collect.ts";
 import { compareSnapshots } from "../snapshots/compare.ts";
+import { discardSnapshotAttempt } from "../snapshots/discard-attempt.ts";
 import { extractSnapshot } from "../snapshots/extract.ts";
 import {
   CanonicalSnapshotPathSchema,
@@ -32,6 +37,8 @@ export function createDefaultPageWatchDependencies(): PageWatchDependencies {
       collectExpired: async (): Promise<void> => {
         await collectExpiredSnapshots();
       },
+      discardAttempt: discardSnapshotAttempt,
+      rollbackHtmlChangeCount,
     },
     organizations: {
       read: async (snapshotDirectory) => {
@@ -44,6 +51,13 @@ export function createDefaultPageWatchDependencies(): PageWatchDependencies {
     notifier: {
       send: async (text: string): Promise<void> => {
         await createPageChangeTelegramNotifier()(text);
+      },
+    },
+    retryClock: {
+      wait: async (milliseconds: number): Promise<void> => {
+        await new Promise<void>((resolveWait): void => {
+          setTimeout(resolveWait, milliseconds);
+        });
       },
     },
   };

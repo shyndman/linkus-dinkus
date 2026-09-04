@@ -65,6 +65,8 @@ export type SnapshotStore = Readonly<{
   ) => Promise<boolean>;
   incrementHtmlChangeCount: (snapshotDirectory: SnapshotDirectory) => Promise<number>;
   collectExpired: () => Promise<void>;
+  discardAttempt: (snapshot: HtmlSnapshotPath) => Promise<void>;
+  rollbackHtmlChangeCount: (snapshotDirectory: SnapshotDirectory) => Promise<void>;
 }>;
 
 export type OrganizationStore = Readonly<{
@@ -82,6 +84,10 @@ export type ChangeJudge = Readonly<{
 export type Notifier = Readonly<{
   send: (text: string) => Promise<void>;
 }>;
+export type RetryClock = Readonly<{
+  wait: (milliseconds: number) => Promise<void>;
+}>;
+
 
 export type PageWatchDependencies = Readonly<{
   pageState: PageStateStore;
@@ -90,4 +96,5 @@ export type PageWatchDependencies = Readonly<{
   extractorAgent: ExtractorAgent;
   changeJudge: ChangeJudge;
   notifier: Notifier;
+  retryClock: RetryClock;
 }>;

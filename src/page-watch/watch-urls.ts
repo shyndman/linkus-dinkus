@@ -8,6 +8,7 @@ import {
   type HtmlSnapshotPath,
   type NotificationTrigger,
   type OrganizationName,
+  type SnapshotDirectory,
   type WatchedUrl,
 } from "./domain.ts";
 import { organizationNamePath } from "./organization-name.ts";
@@ -38,15 +39,12 @@ async function setUpUrl(
   url: WatchedUrl,
   notificationTrigger: NotificationTrigger,
   initialState: UrlStateResult,
+  currentSnapshot: HtmlSnapshotPath,
   dependencies: PageWatchDependencies,
 ): Promise<UrlWatchResult> {
   logger.info("setting up a page.", {
     initialState: initialState.state,
     snapshotDirectory: initialState.snapshotDirectory,
-  });
-  const currentSnapshot = await dependencies.snapshots.capture(url);
-  logger.info("captured an HTML snapshot for extractor setup.", {
-    snapshot: basename(currentSnapshot),
   });
   await dependencies.extractorAgent.run({
     reason: "setup",
@@ -82,6 +80,11 @@ async function setUpUrl(
     judgment: null,
   };
 }
+type PageAttemptState = {
+  htmlChangeCountIncremented: boolean;
+  snapshotDirectory: SnapshotDirectory | null;
+};
+
 
 async function auditExtractorAfterHtmlChange(
   didHtmlChange: boolean,
@@ -89,10 +92,12 @@ async function auditExtractorAfterHtmlChange(
   notificationTrigger: NotificationTrigger,
   urlState: UrlStateResult,
   currentSnapshot: HtmlSnapshotPath,
+  attemptState: PageAttemptState,
   dependencies: PageWatchDependencies,
 ): Promise<boolean> {
   if (!didHtmlChange) return false;
   const count = await dependencies.snapshots.incrementHtmlChangeCount(urlState.snapshotDirectory);
+  attemptState.htmlChangeCountIncremented = true;
   const auditDue = count % APPLICATION_CONFIG.pageChecks.extractorAuditInterval === 0;
   logger.info(
     auditDue
@@ -169,22 +174,20 @@ async function watchConfiguredUrl(
   url: WatchedUrl,
   notificationTrigger: NotificationTrigger,
   urlState: UrlStateResult,
+  currentSnapshot: HtmlSnapshotPath,
+  attemptState: PageAttemptState,
   dependencies: PageWatchDependencies,
 ): Promise<UrlWatchResult> {
   logger.info("checking a configured page.", { snapshotDirectory: urlState.snapshotDirectory });
-  const currentSnapshot = await dependencies.snapshots.capture(url);
-  logger.info("captured an HTML snapshot.", { snapshot: basename(currentSnapshot) });
   const organization = await getOrganizationName(url, urlState, currentSnapshot, dependencies);
-  const didHtmlChange = await dependencies.snapshots.htmlChanged(
-    urlState.snapshotDirectory,
-    currentSnapshot,
-  );
+  const didHtmlChange = await dependencies.snapshots.htmlChanged(urlState.snapshotDirectory, currentSnapshot);
   const extractorAuditRan = await auditExtractorAfterHtmlChange(
     didHtmlChange,
     url,
     notificationTrigger,
     urlState,
     currentSnapshot,
+    attemptState,
     dependencies,
   );
 
@@ -221,20 +224,74 @@ async function watchConfiguredUrl(
     judgment,
   };
 }
+async function preparePageRetry(
+  error: unknown,
+  attempt: number,
+  attemptState: PageAttemptState,
+  currentSnapshot: HtmlSnapshotPath | null,
+  dependencies: PageWatchDependencies,
+): Promise<void> {
+  if (attempt >= APPLICATION_CONFIG.pageChecks.attemptCount) throw error;
+  logger.warn("page-check attempt failed. The page will retry.", {
+    attempt,
+    attemptCount: APPLICATION_CONFIG.pageChecks.attemptCount,
+    retryDelayMilliseconds: APPLICATION_CONFIG.pageChecks.retryDelayMilliseconds,
+    error: errorDetail(error),
+  });
+  if (
+    attemptState.htmlChangeCountIncremented
+    && attemptState.snapshotDirectory !== null
+  ) {
+    await dependencies.snapshots.rollbackHtmlChangeCount(attemptState.snapshotDirectory);
+  }
+  if (currentSnapshot !== null) {
+    await dependencies.snapshots.discardAttempt(currentSnapshot);
+  }
+  await dependencies.retryClock.wait(APPLICATION_CONFIG.pageChecks.retryDelayMilliseconds);
+}
+
 
 async function watchTypedUrl(
   url: WatchedUrl,
   notificationTrigger: NotificationTrigger,
   dependencies: PageWatchDependencies,
 ): Promise<UrlWatchResult> {
-  const state = await dependencies.pageState.classify(url);
-  logger.info("classified the page.", {
-    state: state.state,
-    snapshotDirectory: state.snapshotDirectory,
-  });
-  return state.state === "configured"
-    ? watchConfiguredUrl(url, notificationTrigger, state, dependencies)
-    : setUpUrl(url, notificationTrigger, state, dependencies);
+  for (let attempt = 1; ; attempt += 1) {
+    let currentSnapshot: HtmlSnapshotPath | null = null;
+    const attemptState: PageAttemptState = {
+      htmlChangeCountIncremented: false,
+      snapshotDirectory: null,
+    };
+    try {
+      const state = await dependencies.pageState.classify(url);
+      logger.info("classified the page.", {
+        state: state.state,
+        snapshotDirectory: state.snapshotDirectory,
+      });
+      attemptState.snapshotDirectory = state.snapshotDirectory;
+      currentSnapshot = await dependencies.snapshots.capture(url);
+      logger.info(
+        state.state === "configured"
+          ? "captured an HTML snapshot."
+          : "captured an HTML snapshot for extractor setup.",
+        { snapshot: basename(currentSnapshot) },
+      );
+      return await (
+        state.state === "configured"
+          ? watchConfiguredUrl(
+            url,
+            notificationTrigger,
+            state,
+            currentSnapshot,
+            attemptState,
+            dependencies,
+          )
+          : setUpUrl(url, notificationTrigger, state, currentSnapshot, dependencies)
+      );
+    } catch (error: unknown) {
+      await preparePageRetry(error, attempt, attemptState, currentSnapshot, dependencies);
+    }
+  }
 }
 
 export async function watchUrl(

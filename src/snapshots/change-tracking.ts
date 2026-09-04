@@ -51,26 +51,46 @@ export async function htmlChanged(
   });
   return changed;
 }
-
-export async function incrementHtmlChangeCount(snapshotDirectory: string): Promise<number> {
-  const directory = absolutePath(snapshotDirectory);
-  const countPath = join(directory, HTML_CHANGE_COUNT_FILE);
-  let previous = 0;
+async function readHtmlChangeCount(countPath: string): Promise<number> {
   try {
     const text = (await readFile(countPath, "utf8")).trim();
     if (!/^(0|[1-9]\d*)$/.test(text)) {
       logger.error("html change count is invalid.", { file: HTML_CHANGE_COUNT_FILE });
       throw new Error(`${countPath} does not contain a nonnegative integer`);
     }
-    previous = Number(text);
-    logger.info("read the saved HTML change count.", { changeCount: previous });
+    const count = Number(text);
+    logger.info("read the saved HTML change count.", { changeCount: count });
+    return count;
   } catch (error: unknown) {
     if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
     logger.info("no HTML change count exists yet. The count starts at zero.");
+    return 0;
   }
+}
+
+
+export async function incrementHtmlChangeCount(snapshotDirectory: string): Promise<number> {
+  const directory = absolutePath(snapshotDirectory);
+  const countPath = join(directory, HTML_CHANGE_COUNT_FILE);
+  const previous = await readHtmlChangeCount(countPath);
   const next = previous + 1;
   await mkdir(directory, { recursive: true });
   await writeFile(countPath, `${next}\n`, "utf8");
   logger.info("saved the HTML change count.", { changeCount: next });
   return next;
+}
+
+export async function rollbackHtmlChangeCount(snapshotDirectory: string): Promise<void> {
+  const directory = absolutePath(snapshotDirectory);
+  const countPath = join(directory, HTML_CHANGE_COUNT_FILE);
+  const current = await readHtmlChangeCount(countPath);
+  if (current === 0) {
+    logger.error("cannot roll back an HTML change count of zero.", {
+      file: HTML_CHANGE_COUNT_FILE,
+    });
+    throw new Error(`${countPath} cannot roll back below zero`);
+  }
+  const previous = current - 1;
+  await writeFile(countPath, `${previous}\n`, "utf8");
+  logger.info("rolled back the HTML change count.", { changeCount: previous });
 }
