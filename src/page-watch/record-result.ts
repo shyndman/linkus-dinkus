@@ -44,7 +44,6 @@ async function readFailureState(path: string): Promise<FailureState> {
 
 async function writeFailureState(path: string, state: FailureState): Promise<void> {
   await writeFile(path, `${JSON.stringify(state)}\n`, "utf8");
-  logger.info("saved the failure streak.", { consecutiveFailures: state.consecutiveFailures });
 }
 
 export async function recordUrlResult(url: string, result: UrlResult): Promise<RecordResult> {
