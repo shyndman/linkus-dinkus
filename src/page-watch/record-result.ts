@@ -4,7 +4,7 @@ import { pathToFileURL } from "node:url";
 import { APPLICATION_CONFIG } from "../config.ts";
 import { logger } from "../logger.ts";
 import { fail, getUrlSnapshotDirectory } from "../runtime.ts";
-import { createTelegramNotifier } from "../integrations/telegram.ts";
+import { createAdminTelegramNotifier } from "../integrations/telegram.ts";
 
 export type UrlResult = "success" | "failure";
 type FailureState = Readonly<{ consecutiveFailures: number }>;
@@ -66,7 +66,7 @@ export async function recordUrlResult(url: string, result: UrlResult): Promise<R
       consecutiveFailures,
       notificationThreshold: APPLICATION_CONFIG.pageChecks.failureNotificationThreshold,
     });
-    const notify = createTelegramNotifier();
+    const notify = createAdminTelegramNotifier();
     await notify(`Page watch failed for ${url} three times in a row.`);
     notified = true;
   }

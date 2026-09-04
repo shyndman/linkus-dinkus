@@ -1,5 +1,5 @@
 import { runChangeJudge, runExtractorAgent } from "../integrations/agents.ts";
-import { createTelegramNotifier } from "../integrations/telegram.ts";
+import { createPageChangeTelegramNotifier } from "../integrations/telegram.ts";
 import { capturePage } from "../snapshots/capture.ts";
 import { htmlChanged, incrementHtmlChangeCount } from "../snapshots/change-tracking.ts";
 import { collectExpiredSnapshots } from "../snapshots/collect.ts";
@@ -43,7 +43,7 @@ export function createDefaultPageWatchDependencies(): PageWatchDependencies {
     changeJudge: { run: runChangeJudge },
     notifier: {
       send: async (text: string): Promise<void> => {
-        await createTelegramNotifier()(text);
+        await createPageChangeTelegramNotifier()(text);
       },
     },
   };
