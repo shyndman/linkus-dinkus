@@ -1,1 +1,5 @@
-/home/shyndman/.nvm/versions/node/v24.5.0/bin/defuddle
+#!/usr/bin/env sh
+set -eu
+
+project_directory=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+exec "$project_directory/node_modules/.bin/defuddle" "$@"

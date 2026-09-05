@@ -55,7 +55,7 @@ export const APPLICATION_CONFIG = {
     renderSettleMilliseconds: 10_000,
   },
   systemd: {
-    timerUnitName: "shoestring-page-watch.timer",
-    serviceUnitName: "shoestring-page-watch.service",
+    timerUnitName: "linkus-dinkus.timer",
+    serviceUnitName: "linkus-dinkus.service",
   },
 } as const satisfies ApplicationConfig;

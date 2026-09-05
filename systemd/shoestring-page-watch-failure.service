@@ -1,7 +1,0 @@
-[Unit]
-Description=Notify about a page-watch failure
-
-[Service]
-Type=oneshot
-WorkingDirectory=/home/shyndman/dev/projects/shoestring-page-watch
-ExecStart=/home/shyndman/dev/projects/shoestring-page-watch/bin/notify-page-watch-failure

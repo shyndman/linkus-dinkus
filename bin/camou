@@ -1,1 +1,5 @@
-/home/shyndman/.local/bin/camou
+#!/usr/bin/env sh
+set -eu
+
+project_directory=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+exec "$project_directory/.tools/camoufox-cli/.venv/bin/camou" "$@"

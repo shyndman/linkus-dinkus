@@ -1,0 +1,8 @@
+[Unit]
+Description=Notify about a Linkus Dinkus failure
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/linkus-dinkus
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/opt/linkus-dinkus/bin/notify-page-watch-failure

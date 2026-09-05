@@ -1,8 +1,0 @@
-[Unit]
-Description=Check watched pages
-OnFailure=shoestring-page-watch-failure.service
-
-[Service]
-Type=oneshot
-WorkingDirectory=/home/shyndman/dev/projects/shoestring-page-watch
-ExecStart=/home/shyndman/dev/projects/shoestring-page-watch/bin/run-page-watch

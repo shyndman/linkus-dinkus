@@ -20,6 +20,7 @@ import { watchUrls } from "./watch-urls.ts";
 
 const MCP_CONFIG_PATH = resolve(PROJECT_ROOT, ".omp", "mcp.json");
 const POLL_FREQUENCY_INPUT_PATH = resolve(PROJECT_ROOT, "snapshots", "poll-frequency-input.txt");
+const SYSTEMD_TIME_REFERENCE_PATH = resolve(PROJECT_ROOT, "resources", "systemd.time.md");
 const DATE_FORMAT = "+%b %-d, %-I:%M %p";
 
 
@@ -200,18 +201,12 @@ function runOmp(arguments_: readonly string[]): string {
   return result.stdout;
 }
 function readSystemdTimeDocumentation(): string {
-  logger.info("reading the local systemd calendar documentation for the schedule model.");
-  const result: SpawnSyncReturns<string> = spawnSync("man", ["--pager=cat", "7", "systemd.time"], {
-    encoding: "utf8",
-  });
-  if (result.error) throw new Error(`man failed to start: ${result.error.message}`);
-  if (result.status !== 0) {
-    const detail = result.stderr.trim() || result.stdout.trim() || `exit status ${result.status}`;
-    throw new Error(`Could not read the systemd.time documentation: ${detail}`);
+  logger.info("reading the bundled systemd calendar reference for the schedule model.");
+  const documentation = readFileSync(SYSTEMD_TIME_REFERENCE_PATH, "utf8").trim();
+  if (documentation.length === 0) {
+    throw new Error(`The systemd calendar reference is empty: ${SYSTEMD_TIME_REFERENCE_PATH}`);
   }
-  const documentation = result.stdout.trim();
-  if (documentation.length === 0) throw new Error("The systemd.time documentation is empty");
-  logger.info("read the systemd calendar documentation.", {
+  logger.info("read the systemd calendar reference.", {
     bytes: Buffer.byteLength(documentation),
   });
   return documentation;
@@ -368,7 +363,7 @@ function createGoogleSheetsConfigurationSource(client: ToolClient): Configuratio
 async function main(): Promise<void> {
   logger.info("starting the page-watch application.");
   const mcpServer = readMcpServerConfiguration();
-  const client = new Client({ name: "shoestring-page-watch", version: "1.0.0" });
+  const client = new Client({ name: "linkus-dinkus", version: "1.0.0" });
   const transport = new StdioClientTransport({ command: mcpServer.command, args: [...mcpServer.args] });
   logger.info("connecting to Google Sheets.");
   try {

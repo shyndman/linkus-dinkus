@@ -1,0 +1,19 @@
+[Unit]
+Description=Create the initial Linkus Dinkus timer
+AssertPathIsMountPoint=/var/lib/linkus-dinkus
+AssertPathExists=/etc/linkus-dinkus/secrets/google-service-account.json
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/linkus-dinkus
+Environment=GOOGLE_SERVICE_ACCOUNT_FILE=/etc/linkus-dinkus/secrets/google-service-account.json
+Environment=XDG_CACHE_HOME=/usr/lib/linkus-dinkus/cache
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecCondition=/usr/bin/test ! -e %h/.config/systemd/user/linkus-dinkus.timer
+ExecStart=/opt/linkus-dinkus/bin/run-page-watch
+Restart=on-failure
+RestartSec=30s
+UMask=0077
+
+[Install]
+WantedBy=default.target

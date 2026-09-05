@@ -1,0 +1,12 @@
+.env
+.git
+.github
+.worktrees
+.omp/session
+snapshots
+node_modules
+.tools
+core
+core.*
+Dockerfile*
+!Dockerfile
