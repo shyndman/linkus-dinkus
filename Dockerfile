@@ -85,7 +85,7 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile --prod
 
 COPY AGENTS.md tsconfig.json ./
-COPY .omp/mcp.json .omp/mcp.json
+COPY .omp/mcp.container.json .omp/mcp.json
 COPY .omp/extensions/ .omp/extensions/
 COPY bin/ bin/
 COPY resources/ resources/
