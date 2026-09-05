@@ -1,13 +1,12 @@
 import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { z } from "zod";
 import { APPLICATION_CONFIG } from "../config.ts";
 import { errorDetail, logger } from "../logger.ts";
-import { PROJECT_ROOT, fail } from "../runtime.ts";
+import { PROJECT_ROOT } from "../runtime.ts";
 import { syncSystemdSchedule } from "../systemd/sync-schedule.ts";
 import { createDefaultPageWatchDependencies } from "./default-dependencies.ts";
 import {
@@ -360,7 +359,7 @@ function createGoogleSheetsConfigurationSource(client: ToolClient): Configuratio
 
 
 
-async function main(): Promise<void> {
+export async function runPageWatch(): Promise<void> {
   logger.info("starting the page-watch application.");
   const mcpServer = readMcpServerConfiguration();
   const client = new Client({ name: "linkus-dinkus", version: "1.0.0" });
@@ -391,9 +390,4 @@ async function main(): Promise<void> {
     });
     throw error;
   }
-}
-
-const entryPath = process.argv[1];
-if (entryPath !== undefined && import.meta.url === pathToFileURL(entryPath).href) {
-  main().catch(fail);
 }
