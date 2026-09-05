@@ -1,5 +1,10 @@
 #!/usr/bin/env sh
 set -eu
 
+development_camou="$HOME/.local/bin/camou"
+if [ -x "$development_camou" ]; then
+  exec "$development_camou" "$@"
+fi
+
 project_directory=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 exec "$project_directory/.tools/camoufox-cli/.venv/bin/camou" "$@"
