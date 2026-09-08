@@ -6,6 +6,5 @@ tasks:
   run:
     desc: Run all page checks once
     cmds:
-      - bin/camou install
       - bin/run-page-watch
     silent: true

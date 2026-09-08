@@ -5,6 +5,9 @@
   "packageManager": "pnpm@11.24.0",
   "dependencies": {
     "@modelcontextprotocol/client": "2.0.0",
+    "@openrouter/ai-sdk-provider": "3.0.0",
+    "@sindresorhus/slugify": "3.0.1",
+    "ai": "7.0.93",
     "cheerio": "1.2.0",
     "defuddle": "0.19.3",
     "dotenv": "17.4.2",
@@ -14,6 +17,7 @@
     "zod": "^4.5.4"
   },
   "devDependencies": {
+    "@types/json-schema": "7.0.15",
     "@types/node": "24.13.3",
     "typescript": "5.9.3"
   }
