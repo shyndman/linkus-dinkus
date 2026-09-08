@@ -1,10 +1,7 @@
 import { Bot } from "./gramio-runtime.js";
-import { fileURLToPath } from "node:url";
-import { config } from "dotenv";
 import { errorDetail, logger } from "../logger.ts";
 
-const PROJECT_ENV_PATH = fileURLToPath(new URL("../../.env", import.meta.url));
-config({ path: PROJECT_ENV_PATH, quiet: true });
+import "../runtime.ts";
 const PAGE_CHANGE_SIGNATURE = "-Linkus Dinkus";
 const PAGE_CHANGE_SIGNATURE_SEPARATOR = "\n\n";
 
