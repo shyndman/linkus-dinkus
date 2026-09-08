@@ -55,14 +55,14 @@ export async function capturePage(url: string): Promise<string> {
   const sessionArguments = ["--session", browserSession] as const;
   await mkdir(snapshotDirectory, { recursive: true });
   logger.info("snapshot directory is ready. The browser will settle before capture.", {
-    settleMilliseconds: APPLICATION_CONFIG.snapshots.renderSettleMilliseconds,
+    settleMs: APPLICATION_CONFIG.snapshots.renderSettleMs,
   });
   try {
     await runTool("bin/camou", [...sessionArguments, "open", url]);
     await runTool("bin/camou", [
       ...sessionArguments,
       "wait",
-      String(APPLICATION_CONFIG.snapshots.renderSettleMilliseconds),
+      String(APPLICATION_CONFIG.snapshots.renderSettleMs),
     ]);
     logger.info("rendered page settled. Reading the document HTML.");
 

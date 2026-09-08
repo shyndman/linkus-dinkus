@@ -56,7 +56,7 @@ export async function runTool(
         const detail = stderr.trim() || stdout.trim() || `exit status ${status}`;
         logger.error("a subprocess failed.", {
           command: relativePath,
-          durationMilliseconds: Math.round(performance.now() - startedAt),
+          durationMs: Math.round(performance.now() - startedAt),
           status,
         });
         rejectOutput(new Error(`${relativePath} failed: ${detail}`));

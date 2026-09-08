@@ -17,11 +17,11 @@ export type ApplicationConfig = Readonly<{
     extractorAuditInterval: number;
     failureNotificationThreshold: number;
     attemptCount: number;
-    retryDelayMilliseconds: number;
+    retryDelayMs: number;
   }>;
   snapshots: Readonly<{
     retentionDays: number;
-    renderSettleMilliseconds: number;
+    renderSettleMs: number;
   }>;
   systemd: Readonly<{
     timerUnitName: string;
@@ -48,11 +48,11 @@ export const APPLICATION_CONFIG = {
     extractorAuditInterval: 5,
     failureNotificationThreshold: 3,
     attemptCount: 3,
-    retryDelayMilliseconds: 10_000,
+    retryDelayMs: 10_000,
   },
   snapshots: {
     retentionDays: 7,
-    renderSettleMilliseconds: 10_000,
+    renderSettleMs: 10_000,
   },
   systemd: {
     timerUnitName: "linkus-dinkus.timer",

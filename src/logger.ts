@@ -67,12 +67,12 @@ export const SITE_LOG_TAG_ENVIRONMENT_VARIABLE = "PAGE_WATCH_SITE_TAG";
 const siteLogTagStorage = new AsyncLocalStorage<string>();
 
 function elapsedTime(): string {
-  const elapsedMilliseconds = Math.floor(performance.now());
-  const minutes = String(Math.floor(elapsedMilliseconds / MILLISECONDS_PER_MINUTE)).padStart(2, "0");
+  const elapsedMs = Math.floor(performance.now());
+  const minutes = String(Math.floor(elapsedMs / MILLISECONDS_PER_MINUTE)).padStart(2, "0");
   const seconds = String(
-    Math.floor(elapsedMilliseconds / MILLISECONDS_PER_SECOND) % SECONDS_PER_MINUTE,
+    Math.floor(elapsedMs / MILLISECONDS_PER_SECOND) % SECONDS_PER_MINUTE,
   ).padStart(2, "0");
-  const milliseconds = String(elapsedMilliseconds % MILLISECONDS_PER_SECOND).padStart(3, "0");
+  const milliseconds = String(elapsedMs % MILLISECONDS_PER_SECOND).padStart(3, "0");
   return [
     ELAPSED_TIME_COLOR,
     minutes,

@@ -235,7 +235,7 @@ async function preparePageRetry(
   logger.warn("page-check attempt failed. The page will retry.", {
     attempt,
     attemptCount: APPLICATION_CONFIG.pageChecks.attemptCount,
-    retryDelayMilliseconds: APPLICATION_CONFIG.pageChecks.retryDelayMilliseconds,
+    retryDelayMs: APPLICATION_CONFIG.pageChecks.retryDelayMs,
     error: errorDetail(error),
   });
   if (
@@ -247,7 +247,7 @@ async function preparePageRetry(
   if (currentSnapshot !== null) {
     await dependencies.snapshots.discardAttempt(currentSnapshot);
   }
-  await dependencies.retryClock.wait(APPLICATION_CONFIG.pageChecks.retryDelayMilliseconds);
+  await dependencies.retryClock.wait(APPLICATION_CONFIG.pageChecks.retryDelayMs);
 }
 
 

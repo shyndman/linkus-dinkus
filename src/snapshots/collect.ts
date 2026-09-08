@@ -21,7 +21,7 @@ export type SnapshotCollectionResult = Readonly<{
   deletedObjects: number;
 }>;
 
-function timestampMilliseconds(timestamp: string): number {
+function timestampMs(timestamp: string): number {
   return Date.UTC(
     Number(timestamp.slice(0, 4)),
     Number(timestamp.slice(4, 6)) - 1,
@@ -34,12 +34,12 @@ function timestampMilliseconds(timestamp: string): number {
 
 async function collectPageSnapshots(
   pageDirectory: string,
-  cutoffMilliseconds: number,
+  cutoffMs: number,
 ): Promise<SnapshotCollectionResult> {
   let deletedSnapshots = 0;
   for (const entry of await readdir(pageDirectory, { withFileTypes: true })) {
     const match = SNAPSHOT_FILE_PATTERN.exec(entry.name);
-    if (match?.[1] === undefined || timestampMilliseconds(match[1]) > cutoffMilliseconds) continue;
+    if (match?.[1] === undefined || timestampMs(match[1]) > cutoffMs) continue;
 
     await unlink(join(pageDirectory, entry.name));
     deletedSnapshots += 1;
@@ -72,13 +72,13 @@ export async function collectExpiredSnapshots(
 ): Promise<SnapshotCollectionResult> {
   if (!(await pathExists(snapshotRoot))) return { deletedSnapshots: 0, deletedObjects: 0 };
 
-  const cutoffMilliseconds = now.getTime()
+  const cutoffMs = now.getTime()
     - APPLICATION_CONFIG.snapshots.retentionDays * MILLISECONDS_PER_DAY;
   let deletedSnapshots = 0;
   let deletedObjects = 0;
   for (const entry of await readdir(snapshotRoot, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
-    const result = await collectPageSnapshots(join(snapshotRoot, entry.name), cutoffMilliseconds);
+    const result = await collectPageSnapshots(join(snapshotRoot, entry.name), cutoffMs);
     deletedSnapshots += result.deletedSnapshots;
     deletedObjects += result.deletedObjects;
   }

@@ -158,7 +158,7 @@ async function runOmpAgent(
       if (startFailed) return;
       if (status !== 0) {
         logger.error("agent failed.", {
-          durationMilliseconds: Math.round(performance.now() - startedAt),
+          durationMs: Math.round(performance.now() - startedAt),
           status,
         });
         rejectAgent(new Error(`omp failed with exit status ${status}`));
@@ -168,7 +168,7 @@ async function runOmpAgent(
     });
   });
   logger.info("agent finished.", {
-    durationMilliseconds: Math.round(performance.now() - startedAt),
+    durationMs: Math.round(performance.now() - startedAt),
   });
 }
 
