@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { logger } from "../logger.ts";
+import { errorDetail, logger } from "../logger.ts";
 import { PROJECT_ROOT } from "../runtime.ts";
 
 export const ORGANIZATION_NAME_FILE = "organization-name.txt";
@@ -16,10 +16,10 @@ export async function readOrganizationName(snapshotDirectory: string): Promise<s
     content = await readFile(path, "utf8");
   } catch (error: unknown) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-      logger.info("no saved organization name exists.");
+      logger.debug("no saved organization name exists.");
       return null;
     }
-    logger.error("could not read the organization name.", { path });
+    logger.error("could not read the organization name.", { path, error: errorDetail(error) });
     throw error;
   }
 
@@ -28,6 +28,6 @@ export async function readOrganizationName(snapshotDirectory: string): Promise<s
     logger.error("the saved organization name is invalid.", { path });
     throw new Error(`${path} must contain one nonempty line`);
   }
-  logger.info("read the saved organization name.", { organizationName: name });
+  logger.debug("read the saved organization name.", { organizationName: name });
   return name;
 }

@@ -14,7 +14,7 @@ export type UrlStateResult = Readonly<{
 export async function getUrlState(url: string): Promise<UrlStateResult> {
   const snapshotDirectory = await getUrlSnapshotDirectory(url);
   const extractorPath = join(snapshotDirectory, "extract");
-  logger.info("checking whether this page has a usable saved extractor.");
+  logger.debug("checking whether this page has a usable saved extractor.");
   let state: UrlState;
 
   if (!(await pathExists(snapshotDirectory))) {
@@ -26,7 +26,7 @@ export async function getUrlState(url: string): Promise<UrlStateResult> {
     state = "configured";
   }
   const relativeSnapshotDirectory = relative(PROJECT_ROOT, snapshotDirectory);
-  logger.info("read the page configuration state.", {
+  logger.debug("read the page configuration state.", {
     state,
     snapshotDirectory: relativeSnapshotDirectory,
   });

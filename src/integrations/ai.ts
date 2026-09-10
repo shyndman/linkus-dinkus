@@ -15,6 +15,6 @@ export function createLanguageModel(): LanguageModel {
   }
 
   const provider = createOpenRouter({ apiKey });
-  logger.info("the AI SDK model is ready.", { model: APPLICATION_CONFIG.agents.model });
+  logger.debug("the AI SDK model is ready.", { model: APPLICATION_CONFIG.agents.model });
   return provider.chat(OPENROUTER_MODEL_ID);
 }

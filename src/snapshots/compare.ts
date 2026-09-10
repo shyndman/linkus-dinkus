@@ -39,16 +39,16 @@ async function createUnifiedDiff(
 
 
 export async function compareSnapshots(snapshotDirectory: string): Promise<SnapshotComparison> {
-  logger.info("looking for canonical Markdown snapshots.");
+  logger.debug("looking for canonical Markdown snapshots.");
   const snapshots = (await readdir(snapshotDirectory))
     .filter((name: string): boolean => CANONICAL_SNAPSHOT_PATTERN.test(name))
     .sort();
-  logger.info("found canonical Markdown snapshots.", { snapshotCount: snapshots.length });
+  logger.debug("found canonical Markdown snapshots.", { snapshotCount: snapshots.length });
   if (snapshots.length === 0) throw new Error(`No canonical snapshots in ${snapshotDirectory}`);
 
   const currentPath = join(snapshotDirectory, snapshots.at(-1)!);
   const currentName = relative(PROJECT_ROOT, currentPath);
-  logger.info("selected the current canonical snapshot.", { snapshot: basename(currentPath) });
+  logger.debug("selected the current canonical snapshot.", { snapshot: basename(currentPath) });
   if (snapshots.length === 1) {
     logger.info("this is the first canonical snapshot, so it establishes the baseline.");
     return { state: "baseline", current: currentName };
@@ -60,12 +60,12 @@ export async function compareSnapshots(snapshotDirectory: string): Promise<Snaps
     readFile(currentPath, "utf8"),
   ]);
   const previousName = relative(PROJECT_ROOT, previousPath);
-  logger.info("comparing canonical snapshots.", {
+  logger.debug("comparing canonical snapshots.", {
     previousSnapshot: basename(previousPath),
     currentSnapshot: basename(currentPath),
   });
   if (previousContent === currentContent) {
-    logger.info("canonical Markdown did not change.", {
+    logger.debug("canonical Markdown did not change.", {
       bytes: Buffer.byteLength(currentContent),
     });
     return {
@@ -76,12 +76,12 @@ export async function compareSnapshots(snapshotDirectory: string): Promise<Snaps
     };
   }
 
-  logger.info("canonical Markdown changed.", {
+  logger.debug("canonical Markdown changed.", {
     previousBytes: Buffer.byteLength(previousContent),
     currentBytes: Buffer.byteLength(currentContent),
   });
   const diff = await createUnifiedDiff(previousPath, currentPath, previousName, currentName);
-  logger.info("created the unified difference.", { bytes: Buffer.byteLength(diff) });
+  logger.debug("created the unified difference.", { bytes: Buffer.byteLength(diff) });
   return {
     state: "changed",
     previous: previousName,

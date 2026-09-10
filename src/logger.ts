@@ -137,7 +137,7 @@ function formatMessage(level: LogLevel, message: unknown, fields: Readonly<Recor
 
 const winstonLogger: Logger = createLogger({
   levels: LOG_LEVEL_PRIORITY,
-  level: "debug",
+  level: env.LOG_LEVEL ?? "info",
   format: format.printf((fields): string => formatMessage(fields.level as LogLevel, fields.message, fields)),
   transports: [
     new transports.Console({

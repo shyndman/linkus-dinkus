@@ -38,7 +38,6 @@ export type TelegramNotifier = (message: string) => Promise<void>;
 function requireTelegramEnvironment(name: TelegramEnvironmentName): string {
   const value = process.env[name];
   if (value) {
-    logger.info("a required Telegram setting is present.", { setting: name });
     return value;
   }
   logger.error("a required Telegram setting is missing.", { setting: name });
@@ -66,10 +65,10 @@ function createTelegramNotifier(
   BotClass: TelegramBotConstructor,
 ): TelegramNotifier {
   const bot = new BotClass(requireTelegramEnvironment("TELEGRAM_BOT_TOKEN"));
-  logger.info("telegram notifier is ready.", { recipients: recipients.length });
+  logger.debug("telegram notifier is ready.", { recipients: recipients.length });
   return async (message: string): Promise<void> => {
     const formattedMessage = formatMessage(message);
-    logger.info("sending a Telegram notification.", {
+    logger.debug("sending a Telegram notification.", {
       characters: formattedMessage.text.length,
       recipients: recipients.length,
     });

@@ -31,10 +31,16 @@ export async function runTool(
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
     let outputBytes = 0;
+    let failed = false;
 
     function captureOutput(chunks: Buffer[], chunk: Buffer): void {
+      if (failed) return;
       outputBytes += chunk.byteLength;
       if (outputBytes > MAX_TOOL_OUTPUT_BYTES) {
+        failed = true;
+        logger.error("subprocess output exceeded its limit.", {
+          command: relativePath, arguments: arguments_.join(" "), outputBytes, limitBytes: MAX_TOOL_OUTPUT_BYTES,
+        });
         child.kill();
         rejectOutput(new Error(`${relativePath} produced more than ${MAX_TOOL_OUTPUT_BYTES} bytes`));
         return;
@@ -45,23 +51,30 @@ export async function runTool(
     child.stdout.on("data", (chunk: Buffer): void => captureOutput(stdoutChunks, chunk));
     child.stderr.on("data", (chunk: Buffer): void => captureOutput(stderrChunks, chunk));
     child.once("error", (error: Error): void => {
-      logger.error("a subprocess could not start.", { command: relativePath, error: error.message });
+      failed = true;
+      logger.error("a subprocess could not start.", {
+        command: relativePath, arguments: arguments_.join(" "), error: error.message,
+      });
       rejectOutput(new Error(`${relativePath} failed to start: ${error.message}`));
     });
-    child.once("close", (status: number | null): void => {
+    child.once("close", (status: number | null, signal: NodeJS.Signals | null): void => {
+      if (failed) return;
       const stdout = Buffer.concat(stdoutChunks).toString("utf8");
       const stderr = Buffer.concat(stderrChunks).toString("utf8");
-      if (stderr.length > 0) process.stderr.write(stderr);
       if (status === null || !acceptedStatuses.includes(status)) {
-        const detail = stderr.trim() || stdout.trim() || `exit status ${status}`;
+        const detail = stderr.trim() || stdout.trim() || (signal === null ? `exit status ${status}` : `signal ${signal}`);
         logger.error("a subprocess failed.", {
           command: relativePath,
+          arguments: arguments_.join(" "),
           durationMs: Math.round(performance.now() - startedAt),
           status,
+          signal,
+          error: detail,
         });
-        rejectOutput(new Error(`${relativePath} failed: ${detail}`));
+        rejectOutput(new Error(`${relativePath} ${arguments_.join(" ")} failed: ${detail}`));
         return;
       }
+      if (stderr.length > 0) process.stderr.write(stderr);
       resolveOutput(stdout);
     });
   });
@@ -73,7 +86,7 @@ export async function pathExists(path: string): Promise<boolean> {
     return true;
   } catch (error: unknown) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") return false;
-    logger.error("could not examine a path.", { path });
+    logger.error("could not examine a path.", { path, error: errorDetail(error) });
     throw error;
   }
 }
@@ -84,7 +97,7 @@ export async function getUrlSnapshotDirectory(url: string): Promise<string> {
     throw new Error(`could not create a snapshot directory slug for ${url}`);
   }
   const snapshotDirectory = resolve(PROJECT_ROOT, "snapshots", slug);
-  logger.info("mapped the watched page to its snapshot directory.", {
+  logger.debug("mapped the watched page to its snapshot directory.", {
     snapshotDirectory: relative(PROJECT_ROOT, snapshotDirectory),
   });
   return snapshotDirectory;

@@ -41,7 +41,7 @@ function validateCalendarExpression(expression: string): void {
   if (result.error) throw new Error(`systemd-analyze failed to start: ${result.error.message}`);
   if (result.status === 0) return;
   const detail = result.stderr.trim() || result.stdout.trim() || `exit status ${result.status}`;
-  logger.error("a calendar expression failed systemd validation.", { error: detail });
+  logger.error("a calendar expression failed systemd validation.", { expression, error: detail });
   throw new Error(`Invalid systemd calendar expression ${JSON.stringify(expression)}: ${detail}`);
 }
 
@@ -65,28 +65,31 @@ function buildTimerUnit(calendarExpressions: readonly string[]): string {
 
 export function syncSystemdSchedule(calendarExpressions: readonly string[]): SyncResult {
   if (calendarExpressions.length === 0) throw new Error("At least one systemd calendar expression is required");
-  logger.info("received calendar expressions for the timer.", {
+  logger.debug("received calendar expressions for the timer.", {
     expressionCount: calendarExpressions.length,
   });
   for (const [index, expression] of calendarExpressions.entries()) {
-    logger.info("validating a calendar expression.", {
+    logger.debug("validating a calendar expression.", {
       expressionNumber: index + 1,
       expressionCount: calendarExpressions.length,
     });
     validateCalendarExpression(expression);
-    logger.info("calendar expression is valid.", { expressionNumber: index + 1 });
+    logger.debug("calendar expression is valid.", { expressionNumber: index + 1 });
   }
 
   mkdirSync(dirname(TIMER_UNIT_PATH), { recursive: true });
   writeFileSync(TIMER_UNIT_PATH, buildTimerUnit(calendarExpressions), "utf8");
-  logger.info("wrote the timer unit.", { path: TIMER_UNIT_PATH });
-  logger.info("reloading the systemd user manager.");
+  logger.debug("wrote the timer unit.", { path: TIMER_UNIT_PATH });
+  logger.debug("reloading the systemd user manager.");
   runSystemctl(["daemon-reload"]);
-  logger.info("enabling the page-watch timer.");
+  logger.debug("enabling the page-watch timer.");
   runSystemctl(["enable", APPLICATION_CONFIG.systemd.timerUnitName]);
-  logger.info("restarting the page-watch timer.");
+  logger.debug("restarting the page-watch timer.");
   runSystemctl(["restart", APPLICATION_CONFIG.systemd.timerUnitName]);
-  logger.info("page-watch timer is enabled and running with its new schedule.");
+  logger.info("page-watch timer is enabled and running with its new schedule.", {
+    timer: APPLICATION_CONFIG.systemd.timerUnitName,
+    expressions: JSON.stringify(calendarExpressions),
+  });
   return { calendarExpressions, timerUnitPath: TIMER_UNIT_PATH };
 }
 

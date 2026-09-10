@@ -19,7 +19,7 @@ export async function htmlChanged(
   const snapshots = (await readdir(directory))
     .filter((name: string): boolean => HTML_SNAPSHOT_PATTERN.test(name))
     .sort();
-  logger.info("found HTML snapshots for comparison.", {
+  logger.debug("found HTML snapshots for comparison.", {
     snapshotCount: snapshots.length,
     currentSnapshot: currentName,
   });
@@ -32,7 +32,7 @@ export async function htmlChanged(
     throw new Error(`Current HTML snapshot is absent from ${snapshotDirectory}: ${currentSnapshot}`);
   }
   if (currentIndex === 0) {
-    logger.info("current HTML snapshot establishes the baseline.", { currentSnapshot: currentName });
+    logger.debug("current HTML snapshot establishes the baseline.", { currentSnapshot: currentName });
     return false;
   }
 
@@ -43,7 +43,7 @@ export async function htmlChanged(
     readFile(join(directory, currentName)),
   ]);
   const changed = !previous.equals(current);
-  logger.info(changed ? "rendered HTML changed." : "rendered HTML did not change.", {
+  logger.debug(changed ? "rendered HTML changed." : "rendered HTML did not change.", {
     currentSnapshot: currentName,
     previousSnapshot: previousName,
     currentBytes: current.byteLength,
@@ -55,15 +55,15 @@ async function readHtmlChangeCount(countPath: string): Promise<number> {
   try {
     const text = (await readFile(countPath, "utf8")).trim();
     if (!/^(0|[1-9]\d*)$/.test(text)) {
-      logger.error("html change count is invalid.", { file: HTML_CHANGE_COUNT_FILE });
+      logger.error("html change count is invalid.", { path: countPath });
       throw new Error(`${countPath} does not contain a nonnegative integer`);
     }
     const count = Number(text);
-    logger.info("read the saved HTML change count.", { changeCount: count });
+    logger.debug("read the saved HTML change count.", { changeCount: count });
     return count;
   } catch (error: unknown) {
     if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
-    logger.info("no HTML change count exists yet. The count starts at zero.");
+    logger.debug("no HTML change count exists yet. The count starts at zero.");
     return 0;
   }
 }
@@ -76,7 +76,7 @@ export async function incrementHtmlChangeCount(snapshotDirectory: string): Promi
   const next = previous + 1;
   await mkdir(directory, { recursive: true });
   await writeFile(countPath, `${next}\n`, "utf8");
-  logger.info("saved the HTML change count.", { changeCount: next });
+  logger.debug("saved the HTML change count.", { changeCount: next });
   return next;
 }
 
@@ -92,5 +92,5 @@ export async function rollbackHtmlChangeCount(snapshotDirectory: string): Promis
   }
   const previous = current - 1;
   await writeFile(countPath, `${previous}\n`, "utf8");
-  logger.info("rolled back the HTML change count.", { changeCount: previous });
+  logger.debug("rolled back the HTML change count.", { changeCount: previous });
 }

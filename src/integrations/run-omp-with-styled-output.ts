@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { createInterface } from "node:readline";
 import type { Readable } from "node:stream";
-import { SITE_LOG_TAG_ENVIRONMENT_VARIABLE } from "../logger.ts";
+import { logger, SITE_LOG_TAG_ENVIRONMENT_VARIABLE } from "../logger.ts";
 import { fail, PROJECT_ROOT } from "../runtime.ts";
 
 const OUTPUT_INDENT = "  ";
@@ -32,12 +32,15 @@ async function main(): Promise<void> {
     stdio: ["ignore", "pipe", "pipe"],
   });
   const close = once(child, "close") as Promise<[number | null, NodeJS.Signals | null]>;
-  const [, , [status]] = await Promise.all([
+  const [, , [status, signal]] = await Promise.all([
     forwardOutput(child.stdout),
     forwardOutput(child.stderr),
     close,
   ]);
-  if (status !== 0) process.exitCode = status ?? 1;
+  if (status !== 0) {
+    logger.error("OMP process failed.", { status, signal });
+    process.exitCode = status ?? 1;
+  }
 }
 
 main().catch(fail);
