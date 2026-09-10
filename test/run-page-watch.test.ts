@@ -6,6 +6,8 @@ import {
   readConfigurationAndWriteTimestamp,
   syncPollFrequency,
 } from "../src/page-watch/run.ts";
+import type { InvalidUrlCellOffset } from "../src/integrations/style-invalid-urls.ts";
+import type { Notifier } from "../src/page-watch/ports.ts";
 
 type ToolRequest = Readonly<{
   name: string;
@@ -18,11 +20,34 @@ function textResult(value: unknown): Readonly<{
   return { content: [{ type: "text", text: JSON.stringify(value) }] };
 }
 
-test("reads all configuration before writing the timestamp", async (): Promise<void> => {
-  const calls: ToolRequest[] = [];
+function collectingNotifier(): Readonly<{ notifier: Notifier; notifications: string[] }> {
+  const notifications: string[] = [];
+  return {
+    notifications,
+    notifier: {
+      send: async (text: string): Promise<void> => {
+        notifications.push(text);
+      },
+    },
+  };
+}
+
+function collectingStyler(): Readonly<{
+  styleInvalidCells: (cells: readonly InvalidUrlCellOffset[]) => Promise<void>;
+  styledCells: InvalidUrlCellOffset[];
+}> {
+  const styledCells: InvalidUrlCellOffset[] = [];
+  return {
+    styledCells,
+    styleInvalidCells: async (cells: readonly InvalidUrlCellOffset[]): Promise<void> => {
+      styledCells.push(...cells);
+    },
+  };
+}
+
+test("accepts valid URL entries without error notifications or error styling", async (): Promise<void> => {
   const client = {
     async callTool(request: ToolRequest): Promise<unknown> {
-      calls.push(request);
       if (request.name === "write_cells") return textResult({ updated_cells: 1 });
       const rangeName = request.arguments.range_notation;
       if (rangeName === "notificationTrigger") return textResult([["new job"]]);
@@ -32,20 +57,120 @@ test("reads all configuration before writing the timestamp", async (): Promise<v
     },
   };
 
-  const configuration = await readConfigurationAndWriteTimestamp(client);
+  const { notifier, notifications } = collectingNotifier();
+  const { styleInvalidCells, styledCells } = collectingStyler();
+
+  const configuration = await readConfigurationAndWriteTimestamp(client, notifier, styleInvalidCells);
 
   assert.deepEqual(configuration, {
     notificationTrigger: "new job",
     pollFrequency: "every 15 minutes",
     urls: ["https://one.example", "https://two.example"],
   });
-  assert.deepEqual(calls.slice(0, 3).map((call: ToolRequest): string => call.name), [
-    "read_cells",
-    "read_cells",
-    "read_cells",
+  assert.deepEqual(notifications, []);
+  assert.deepEqual(styledCells, []);
+});
+
+test("skips invalid URL entries and notifies the admin with their locations", async (): Promise<void> => {
+  const client = {
+    async callTool(request: ToolRequest): Promise<unknown> {
+      if (request.name === "write_cells") return textResult({ updated_cells: 1 });
+      const rangeName = request.arguments.range_notation;
+      if (rangeName === "notificationTrigger") return textResult([["new job"]]);
+      if (rangeName === "pollFrequency") return textResult([["every 15 minutes"]]);
+      if (rangeName === "urls") {
+        return textResult([["https://one.example"], ["not a url"], ["https://two.example"]]);
+      }
+      throw new Error(`Unexpected range: ${rangeName}`);
+    },
+  };
+  const { notifier, notifications } = collectingNotifier();
+  const { styleInvalidCells, styledCells } = collectingStyler();
+
+  const configuration = await readConfigurationAndWriteTimestamp(client, notifier, styleInvalidCells);
+
+  assert.deepEqual(configuration.urls, ["https://one.example", "https://two.example"]);
+  assert.equal(notifications.length, 1);
+  const message = notifications[0];
+  assert.match(message, /not a url/);
+  assert.match(message, /urls row 2, column 1/);
+  assert.match(message, /2 valid URLs will still be checked\./);
+  assert.deepEqual(styledCells, [{ row: 2, column: 1 }]);
+});
+
+test("reports that no pages will be checked when every URL entry is invalid", async (): Promise<void> => {
+  const client = {
+    async callTool(request: ToolRequest): Promise<unknown> {
+      if (request.name === "write_cells") return textResult({ updated_cells: 1 });
+      const rangeName = request.arguments.range_notation;
+      if (rangeName === "notificationTrigger") return textResult([["new job"]]);
+      if (rangeName === "pollFrequency") return textResult([["every 15 minutes"]]);
+      if (rangeName === "urls") return textResult([["oops"], [""]]);
+      throw new Error(`Unexpected range: ${rangeName}`);
+    },
+  };
+  const { notifier, notifications } = collectingNotifier();
+  const { styleInvalidCells, styledCells } = collectingStyler();
+
+  const configuration = await readConfigurationAndWriteTimestamp(client, notifier, styleInvalidCells);
+
+  assert.deepEqual(configuration.urls, []);
+  assert.equal(notifications.length, 1);
+  const message = notifications[0];
+  assert.match(message, /oops/);
+  assert.match(message, /urls row 1, column 1/);
+  assert.match(message, /urls row 2, column 1: ""/);
+  assert.match(message, /No pages will be checked\./);
+  assert.deepEqual(styledCells, [
+    { row: 1, column: 1 },
+    { row: 2, column: 1 },
   ]);
-  assert.equal(calls[3]?.name, "write_cells");
-  assert.equal(calls[3]?.arguments.range_notation, "lastCheckDateTime");
+});
+
+test("propagates admin notification failures instead of suppressing them", async (): Promise<void> => {
+  const client = {
+    async callTool(request: ToolRequest): Promise<unknown> {
+      if (request.name === "write_cells") return textResult({ updated_cells: 1 });
+      const rangeName = request.arguments.range_notation;
+      if (rangeName === "notificationTrigger") return textResult([["new job"]]);
+      if (rangeName === "pollFrequency") return textResult([["every 15 minutes"]]);
+      if (rangeName === "urls") return textResult([["not a url"]]);
+      throw new Error(`Unexpected range: ${rangeName}`);
+    },
+  };
+  const notifier: Notifier = {
+    send: async (): Promise<void> => {
+      throw new Error("telegram is down");
+    },
+  };
+  const styleInvalidCells = collectingStyler().styleInvalidCells;
+  await assert.rejects(
+    readConfigurationAndWriteTimestamp(client, notifier, styleInvalidCells),
+    /telegram is down/,
+  );
+});
+
+test("notifies even when marking the invalid cells fails, then propagates the styling error", async (): Promise<void> => {
+  const client = {
+    async callTool(request: ToolRequest): Promise<unknown> {
+      if (request.name === "write_cells") return textResult({ updated_cells: 1 });
+      const rangeName = request.arguments.range_notation;
+      if (rangeName === "notificationTrigger") return textResult([["new job"]]);
+      if (rangeName === "pollFrequency") return textResult([["every 15 minutes"]]);
+      if (rangeName === "urls") return textResult([["not a url"]]);
+      throw new Error(`Unexpected range: ${rangeName}`);
+    },
+  };
+  const { notifier, notifications } = collectingNotifier();
+  const styleInvalidCells = async (): Promise<void> => {
+    throw new Error("sheets formatting failed");
+  };
+
+  await assert.rejects(
+    readConfigurationAndWriteTimestamp(client, notifier, styleInvalidCells),
+    /sheets formatting failed/,
+  );
+  assert.match(notifications[0], /not a url/);
 });
 
 test("parses systemd calendar expressions from the JSON response", (): void => {
@@ -55,10 +180,10 @@ test("parses systemd calendar expressions from the JSON response", (): void => {
   );
 });
 
-test("rejects Markdown before systemd timer installation", (): void => {
-  assert.throws(
-    (): readonly string[] => parseSystemdCalendarResponse('```json\n{\"calendarExpressions\":[\"hourly\"]}\n```'),
-    /invalid JSON/,
+test("parses systemd calendar expressions inside Markdown fences", (): void => {
+  assert.deepEqual(
+    parseSystemdCalendarResponse('```json\n{"calendarExpressions": ["*-*-* 12..20:00/10:00"]}\n```'),
+    ["*-*-* 12..20:00/10:00"],
   );
 });
 test("supplies complete systemd documentation and validation feedback", (): void => {
