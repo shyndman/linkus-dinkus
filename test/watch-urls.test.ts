@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import { tmpdir } from "node:os";
+import { APPLICATION_CONFIG } from "../src/config.ts";
 import { compareSnapshots, type SnapshotComparison } from "../src/snapshots/compare.ts";
 import { extractSnapshot, readSnapshotJobCount, recordSnapshotInspection } from "../src/snapshots/extract.ts";
 import { discardSnapshotAttempt } from "../src/snapshots/discard-attempt.ts";
@@ -545,8 +546,9 @@ test("derives a stable three-letter log tag from the URL", (): void => {
   assert.notEqual(urlLogTag(URL), urlLogTag("https://example.org/jobs"));
 });
 
-test("runs at most three page checks at one time", async (): Promise<void> => {
-  const urls = Array.from({ length: 7 }, (_value: unknown, index: number): string => `${URL}/${index}`);
+test("limits active page checks to the configured concurrency", async (): Promise<void> => {
+  const concurrency = APPLICATION_CONFIG.pageChecks.concurrency;
+  const urls = Array.from({ length: concurrency + 1 }, (_value: unknown, index: number): string => `${URL}/${index}`);
   let activeChecks = 0;
   let maximumActiveChecks = 0;
   const releaseChecks: { resolve: (() => void) | null } = { resolve: null };
@@ -573,7 +575,7 @@ test("runs at most three page checks at one time", async (): Promise<void> => {
       };
     },
   );
-  assert.equal(maximumActiveChecks, 3);
+  assert.equal(maximumActiveChecks, concurrency);
   if (releaseChecks.resolve === null) throw new Error("The test completion gate is not ready.");
   releaseChecks.resolve();
   const outcome = await resultsPromise;

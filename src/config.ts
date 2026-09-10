@@ -44,8 +44,8 @@ export const APPLICATION_CONFIG = {
     lastCheckDateTimeRange: "lastCheckDateTime",
   },
   pageChecks: {
-    concurrency: 3,
     extractorAuditInterval: 5,
+    concurrency: 6,
     attemptCount: 3,
     retryDelayMs: 10_000,
   },
