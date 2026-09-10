@@ -32,7 +32,7 @@ export type ScriptAgentTask = Readonly<{
     organizationNamePath: string;
   }>
   | Readonly<{
-    reason: "fifth-html-change";
+    reason: "scheduled-audit";
     notificationTrigger: NotificationTrigger;
   }>
   | Readonly<{
@@ -70,14 +70,8 @@ export type SnapshotStore = Readonly<{
   jobCount: (snapshot: CanonicalSnapshotPath) => Promise<number>;
   recordInspection: (snapshot: CanonicalSnapshotPath, previousJobCount: number, judgment: JudgmentResult) => Promise<void>;
   compare: (snapshotDirectory: SnapshotDirectory) => Promise<SnapshotComparison>;
-  htmlChanged: (
-    snapshotDirectory: SnapshotDirectory,
-    currentSnapshot: HtmlSnapshotPath,
-  ) => Promise<boolean>;
-  incrementHtmlChangeCount: (snapshotDirectory: SnapshotDirectory) => Promise<number>;
   collectExpired: () => Promise<void>;
   discardAttempt: (snapshot: HtmlSnapshotPath) => Promise<void>;
-  rollbackHtmlChangeCount: (snapshotDirectory: SnapshotDirectory) => Promise<void>;
 }>;
 
 export type OrganizationStore = Readonly<{
@@ -103,6 +97,10 @@ export type RetryClock = Readonly<{
 export type PageWatchDependencies = Readonly<{
   pageState: PageStateStore;
   snapshots: SnapshotStore;
+  extractorAudits: Readonly<{
+    isDue: (snapshotDirectory: SnapshotDirectory) => Promise<boolean>;
+    recordSuccess: (snapshotDirectory: SnapshotDirectory) => Promise<void>;
+  }>;
   organizations: OrganizationStore;
   extractorAgent: ExtractorAgent;
   changeJudge: ChangeJudge;

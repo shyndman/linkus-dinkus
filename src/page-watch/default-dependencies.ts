@@ -1,11 +1,7 @@
 import { runChangeJudge, runExtractorAgent, runZeroJobInspection } from "../integrations/agents.ts";
 import { createPageChangeTelegramNotifier } from "../integrations/telegram.ts";
 import { capturePage } from "../snapshots/capture.ts";
-import {
-  htmlChanged,
-  incrementHtmlChangeCount,
-  rollbackHtmlChangeCount,
-} from "../snapshots/change-tracking.ts";
+import { extractorAuditDue, recordExtractorAudit } from "../snapshots/extractor-audit.ts";
 import { collectExpiredSnapshots } from "../snapshots/collect.ts";
 import { compareSnapshots } from "../snapshots/compare.ts";
 import { discardSnapshotAttempt } from "../snapshots/discard-attempt.ts";
@@ -34,14 +30,12 @@ export function createDefaultPageWatchDependencies(): PageWatchDependencies {
       jobCount: readSnapshotJobCount,
       recordInspection: recordSnapshotInspection,
       compare: compareSnapshots,
-      htmlChanged,
-      incrementHtmlChangeCount,
       collectExpired: async (): Promise<void> => {
         await collectExpiredSnapshots();
       },
       discardAttempt: discardSnapshotAttempt,
-      rollbackHtmlChangeCount,
     },
+    extractorAudits: { isDue: extractorAuditDue, recordSuccess: recordExtractorAudit },
     organizations: {
       read: async (snapshotDirectory) => {
         const name = await readOrganizationName(snapshotDirectory);

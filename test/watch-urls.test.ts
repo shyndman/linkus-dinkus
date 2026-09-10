@@ -7,11 +7,7 @@ import { APPLICATION_CONFIG } from "../src/config.ts";
 import { compareSnapshots, type SnapshotComparison } from "../src/snapshots/compare.ts";
 import { extractSnapshot, readSnapshotJobCount, recordSnapshotInspection } from "../src/snapshots/extract.ts";
 import { discardSnapshotAttempt } from "../src/snapshots/discard-attempt.ts";
-import {
-  htmlChanged,
-  incrementHtmlChangeCount,
-  rollbackHtmlChangeCount,
-} from "../src/snapshots/change-tracking.ts";
+import { extractorAuditDue, recordExtractorAudit } from "../src/snapshots/extractor-audit.ts";
 import {
   CanonicalSnapshotPathSchema,
   HtmlSnapshotPathSchema,
@@ -57,8 +53,8 @@ type DependencyOverrides = Readonly<{
   capturePage: (url: string, renderSettleMs: number) => Promise<string>;
   extractSnapshot: (snapshot: string) => Promise<string>;
   compareSnapshots: (snapshotDirectory: string) => Promise<SnapshotComparison>;
-  htmlChanged: (snapshotDirectory: string, currentSnapshot: string) => Promise<boolean>;
-  incrementHtmlChangeCount: (snapshotDirectory: string) => Promise<number>;
+  extractorAuditDue: (snapshotDirectory: string) => Promise<boolean>;
+  recordExtractorAudit: (snapshotDirectory: string) => Promise<void>;
   readOrganizationName: (snapshotDirectory: string) => Promise<string | null>;
   runScriptAgent: (task: ScriptAgentTask) => Promise<void>;
   runJudgeAgent: (task: JudgeAgentTask) => Promise<JudgmentResult>;
@@ -68,7 +64,6 @@ type DependencyOverrides = Readonly<{
   recordResult: (url: string, result: "success" | "failure", detail: string | null) => Promise<void>;
   collectExpiredSnapshots: () => Promise<void>;
   discardSnapshotAttempt: (snapshot: string) => Promise<void>;
-  rollbackHtmlChangeCount: (snapshotDirectory: string) => Promise<void>;
   waitForRetry: (milliseconds: number) => Promise<void>;
 }>;
 
@@ -92,13 +87,9 @@ function makeDependencies(
     calls.push("compare-markdown");
     return UNCHANGED_COMPARISON;
   });
-  const compareHtml = overrides.htmlChanged ?? (async () => {
-    calls.push("compare-html");
-    return false;
-  });
-  const incrementCount = overrides.incrementHtmlChangeCount ?? (async () => {
-    calls.push("increment-html-count");
-    return 1;
+  const auditDue = overrides.extractorAuditDue ?? (async () => false);
+  const recordAudit = overrides.recordExtractorAudit ?? (async () => {
+    calls.push("record-audit");
   });
   const readName = overrides.readOrganizationName ?? (async () => "Example Company");
   const runScriptAgent = overrides.runScriptAgent ?? (async () => {
@@ -119,9 +110,6 @@ function makeDependencies(
   });
   const discardAttempt = overrides.discardSnapshotAttempt ?? (async (snapshot: string) => {
     calls.push(`discard-attempt:${snapshot}`);
-  });
-  const rollbackChangeCount = overrides.rollbackHtmlChangeCount ?? (async (snapshotDirectory: string) => {
-    calls.push(`rollback-html-count:${snapshotDirectory}`);
   });
   const waitForRetry = overrides.waitForRetry ?? (async (milliseconds: number) => {
     calls.push(`wait-for-retry:${milliseconds}`);
@@ -145,12 +133,10 @@ function makeDependencies(
       jobCount: overrides.readJobCount ?? (async () => 1),
       recordInspection: async () => {},
       compare: compareSnapshots,
-      htmlChanged: compareHtml,
-      incrementHtmlChangeCount: incrementCount,
       collectExpired,
       discardAttempt,
-      rollbackHtmlChangeCount: rollbackChangeCount,
     },
+    extractorAudits: { isDue: auditDue, recordSuccess: recordAudit },
     organizations: {
       read: async (snapshotDirectory) => {
         const name = await readName(snapshotDirectory);
@@ -167,122 +153,93 @@ function makeDependencies(
   };
 }
 
-test("detects whether the newest HTML snapshot changed", async (): Promise<void> => {
-  const directory = mkdtempSync(join(tmpdir(), "page-watch-html-"));
+test("persists the audit schedule and makes an audit due at the seven-day boundary", async (): Promise<void> => {
+  const directory = mkdtempSync(join(tmpdir(), "page-watch-audit-"));
+  const completedAt = Date.parse("2026-09-10T12:00:00.000Z");
+  const nextAuditAt = Date.parse("2026-09-17T12:00:00.000Z");
   try {
-    const previous = join(directory, "snapshot-20260826T110000Z.html");
-    const current = join(directory, "snapshot-20260826T120000Z.html");
-    writeFileSync(previous, "<html>same</html>", "utf8");
-    writeFileSync(current, "<html>same</html>", "utf8");
-    assert.equal(await htmlChanged(directory, current), false);
-    writeFileSync(current, "<html>changed</html>", "utf8");
-    assert.equal(await htmlChanged(directory, current), true);
+    assert.equal(await extractorAuditDue(directory, completedAt), true);
+    await recordExtractorAudit(directory, completedAt);
+    assert.equal(await extractorAuditDue(directory, nextAuditAt - 1), false);
+    assert.equal(await extractorAuditDue(directory, nextAuditAt), true);
+    await recordExtractorAudit(directory, nextAuditAt);
+    assert.equal(await extractorAuditDue(directory, nextAuditAt), false);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
 });
 
-test("persists a separate HTML-change count in the URL snapshot directory", async (): Promise<void> => {
-  const directory = mkdtempSync(join(tmpdir(), "page-watch-count-"));
-  try {
-    assert.equal(await incrementHtmlChangeCount(directory), 1);
-    assert.equal(await incrementHtmlChangeCount(directory), 2);
-    assert.equal(await incrementHtmlChangeCount(directory), 3);
-    assert.equal(await incrementHtmlChangeCount(directory), 4);
-    assert.equal(await incrementHtmlChangeCount(directory), 5);
-    await rollbackHtmlChangeCount(directory);
-    assert.equal(await incrementHtmlChangeCount(directory), 5);
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
-  }
-});
-
-test("runs no agent when HTML and Markdown are unchanged", async (): Promise<void> => {
+test("runs no agent when Markdown is unchanged and no audit is due", async (): Promise<void> => {
   const calls: string[] = [];
   const result = await watchUrl(URL, "notify for new jobs", makeDependencies(calls));
-
-  assert.deepEqual(result, {
-    url: URL,
-    organizationName: "Example Company",
-    state: "unchanged",
-    htmlChanged: false,
-    scriptAgentRan: false,
-    judgment: null,
-  });
-  assert.deepEqual(calls, ["classify", "capture", "compare-html", "extract", "compare-markdown"]);
-});
-
-test("runs the script agent on every fifth HTML change", async (): Promise<void> => {
-  const calls: string[] = [];
-  const operations = makeDependencies(calls, {
-    htmlChanged: async (): Promise<boolean> => {
-      calls.push("compare-html");
-      return true;
-    },
-    incrementHtmlChangeCount: async (): Promise<number> => {
-      calls.push("increment-html-count");
-      return 5;
-    },
-  });
-
-  const result = await watchUrl(URL, "notify for new jobs", operations);
-
-  assert.equal(result.scriptAgentRan, true);
+  assert.equal(result.state, "unchanged");
+  assert.equal(result.scriptAgentRan, false);
   assert.equal(result.judgment, null);
-  assert.deepEqual(calls, [
-    "classify",
-    "capture",
-    "compare-html",
-    "increment-html-count",
-    "script-agent",
-    "extract",
-    "compare-markdown",
-  ]);
+  assert.ok(!calls.includes("script-agent"));
+  assert.ok(!calls.includes("judge-agent"));
 });
 
-test("runs both agents when the fifth HTML change changes Markdown", async (): Promise<void> => {
+test("audits unchanged pages only when the saved schedule expires", async (): Promise<void> => {
+  const directory = mkdtempSync(join(tmpdir(), "page-watch-scheduled-audit-"));
   const calls: string[] = [];
+  let now = Date.parse("2026-09-10T12:00:00.000Z");
   const operations = makeDependencies(calls, {
-    htmlChanged: async (): Promise<boolean> => {
-      calls.push("compare-html");
-      return true;
-    },
-    incrementHtmlChangeCount: async (): Promise<number> => {
-      calls.push("increment-html-count");
-      return 10;
-    },
-    compareSnapshots: async (): Promise<SnapshotComparison> => {
-      calls.push("compare-markdown");
-      return CHANGED_COMPARISON;
+    extractorAuditDue: async () => extractorAuditDue(directory, now),
+    recordExtractorAudit: async () => recordExtractorAudit(directory, now),
+  });
+  try {
+    await recordExtractorAudit(directory, now);
+    assert.equal((await watchUrl(URL, "new jobs", operations)).scriptAgentRan, false);
+    now = Date.parse("2026-09-17T12:00:00.000Z");
+    assert.equal((await watchUrl(URL, "new jobs", operations)).scriptAgentRan, true);
+    assert.equal((await watchUrl(URL, "new jobs", operations)).scriptAgentRan, false);
+    assert.equal(calls.filter(call => call === "script-agent").length, 1);
+    assert.ok(!calls.includes("judge-agent"));
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("keeps an audit due after failure and schedules it only after a successful retry", async (): Promise<void> => {
+  const directory = mkdtempSync(join(tmpdir(), "page-watch-failed-audit-"));
+  const calls: string[] = [];
+  let failAudit = true;
+  const operations = makeDependencies(calls, {
+    extractorAuditDue: async () => extractorAuditDue(directory),
+    recordExtractorAudit: async () => recordExtractorAudit(directory),
+    runScriptAgent: async () => {
+      if (failAudit) throw new Error("The captured job board is incomplete.");
     },
   });
+  try {
+    await assert.rejects(watchUrl(URL, "new jobs", operations), /job board is incomplete/);
+    assert.equal(await extractorAuditDue(directory), true);
+    failAudit = false;
+    assert.equal((await watchUrl(URL, "new jobs", operations)).scriptAgentRan, true);
+    assert.equal(await extractorAuditDue(directory), false);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
+test("judges changed Markdown after a scheduled audit", async (): Promise<void> => {
+  const calls: string[] = [];
+  const operations = makeDependencies(calls, {
+    extractorAuditDue: async () => true,
+    compareSnapshots: async () => CHANGED_COMPARISON,
+  });
   const result = await watchUrl(URL, "notify for new jobs", operations);
-
   assert.equal(result.scriptAgentRan, true);
   assert.deepEqual(result.judgment, { state: "not-matched" });
-  assert.deepEqual(calls, [
-    "classify",
-    "capture",
-    "compare-html",
-    "increment-html-count",
-    "script-agent",
-    "extract",
-    "compare-markdown",
-    "judge-agent",
-  ]);
+  assert.equal(calls.filter(call => call === "judge-agent").length, 1);
 });
 
-test("runs only the judge when Markdown changes before the fifth HTML change", async (): Promise<void> => {
+test("runs only the judge when Markdown changes before the next audit", async (): Promise<void> => {
   const calls: string[] = [];
   const operations = makeDependencies(calls, {
-    htmlChanged: async (): Promise<boolean> => true,
-    incrementHtmlChangeCount: async (): Promise<number> => 3,
-    compareSnapshots: async (): Promise<SnapshotComparison> => CHANGED_COMPARISON,
+    compareSnapshots: async () => CHANGED_COMPARISON,
   });
-
   const result = await watchUrl(URL, "notify for new jobs", operations);
-
   assert.equal(result.scriptAgentRan, false);
   assert.deepEqual(result.judgment, { state: "not-matched" });
 });
@@ -448,7 +405,7 @@ test("uses the script agent to set up a new URL", async (): Promise<void> => {
 
   assert.equal(result.state, "set-up");
   assert.equal(result.scriptAgentRan, true);
-  assert.deepEqual(calls, ["classify", "capture", "script-agent", "classify", "extract", "compare-markdown"]);
+  assert.ok(calls.includes("record-audit"));
 });
 
 test("records each URL result exactly once", async (): Promise<void> => {
@@ -466,7 +423,7 @@ test("retries a page stream after extraction failures", async (): Promise<void> 
   const calls: string[] = [];
   let extractionAttempts = 0;
   const dependencies = makeDependencies(calls, {
-    htmlChanged: async (): Promise<boolean> => true,
+    extractorAuditDue: async (): Promise<boolean> => true,
     extractSnapshot: async (): Promise<string> => {
       calls.push("extract");
       extractionAttempts += 1;
@@ -485,8 +442,7 @@ test("retries a page stream after extraction failures", async (): Promise<void> 
   assert.equal(calls.filter((call: string): boolean => call === "classify").length, 3);
   assert.equal(calls.filter((call: string): boolean => call === "capture").length, 3);
   assert.equal(calls.filter((call: string): boolean => call.startsWith("discard-attempt:")).length, 2);
-  assert.equal(calls.filter((call: string): boolean => call === "increment-html-count").length, 3);
-  assert.equal(calls.filter((call: string): boolean => call.startsWith("rollback-html-count:")).length, 2);
+  assert.equal(calls.filter((call: string): boolean => call === "record-audit").length, 1);
   assert.deepEqual(
     calls.filter((call: string): boolean => call.startsWith("wait-for-retry:")),
     ["wait-for-retry:10000", "wait-for-retry:10000"],
@@ -568,7 +524,6 @@ test("limits active page checks to the configured concurrency", async (): Promis
           url: input.url,
           organizationName: OrganizationNameSchema.parse("Example Company"),
           state: "unchanged",
-          htmlChanged: false,
           scriptAgentRan: false,
           judgment: null,
         },

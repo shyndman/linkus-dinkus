@@ -9,7 +9,6 @@ import {
   type HtmlSnapshotPath,
   type NotificationTrigger,
   type OrganizationName,
-  type SnapshotDirectory,
   type WatchedUrl,
 } from "./domain.ts";
 import { organizationNamePath } from "./organization-name.ts";
@@ -26,7 +25,6 @@ export type UrlWatchResult = Readonly<{
   url: WatchedUrl;
   organizationName: OrganizationName;
   state: "set-up" | "baseline" | "unchanged" | "changed";
-  htmlChanged: boolean;
   scriptAgentRan: boolean;
   judgment: JudgmentResult | null;
 }>;
@@ -83,47 +81,31 @@ async function setUpUrl(
     organizationName,
     comparison,
   }, dependencies);
+  await dependencies.extractorAudits.recordSuccess(configured.snapshotDirectory);
   return {
     url,
     organizationName,
     state: "set-up",
-    htmlChanged: false,
     scriptAgentRan: true,
     judgment,
   };
 }
-type PageAttemptState = {
-  htmlChangeCountIncremented: boolean;
-  snapshotDirectory: SnapshotDirectory | null;
-};
 
 
-async function auditExtractorAfterHtmlChange(
-  didHtmlChange: boolean,
+async function auditExtractorIfDue(
   url: WatchedUrl,
   notificationTrigger: NotificationTrigger,
   urlState: UrlStateResult,
   currentSnapshot: HtmlSnapshotPath,
-  attemptState: PageAttemptState,
   dependencies: PageWatchDependencies,
 ): Promise<boolean> {
-  if (!didHtmlChange) return false;
-  const count = await dependencies.snapshots.incrementHtmlChangeCount(urlState.snapshotDirectory);
-  attemptState.htmlChangeCountIncremented = true;
-  const auditDue = count % APPLICATION_CONFIG.pageChecks.extractorAuditInterval === 0;
-  const logAudit = auditDue ? logger.info : logger.debug;
-  logAudit(
-    auditDue
-      ? "html change requires the scheduled extractor audit."
-      : "html change does not require an extractor audit.",
-    {
-      changeCount: count,
-      auditInterval: APPLICATION_CONFIG.pageChecks.extractorAuditInterval,
-    },
-  );
+  const auditDue = await dependencies.extractorAudits.isDue(urlState.snapshotDirectory);
   if (!auditDue) return false;
+  logger.info("the scheduled extractor audit is due.", {
+    auditIntervalDays: APPLICATION_CONFIG.pageChecks.extractorAuditIntervalDays,
+  });
   await dependencies.extractorAgent.run({
-    reason: "fifth-html-change",
+    reason: "scheduled-audit",
     url,
     notificationTrigger,
     snapshotDirectory: urlState.snapshotDirectory,
@@ -221,19 +203,15 @@ async function watchConfiguredUrl(
   notificationTrigger: NotificationTrigger,
   urlState: UrlStateResult,
   currentSnapshot: HtmlSnapshotPath,
-  attemptState: PageAttemptState,
   dependencies: PageWatchDependencies,
 ): Promise<UrlWatchResult> {
   logger.debug("checking a configured page.", { snapshotDirectory: urlState.snapshotDirectory });
   const organization = await getOrganizationName(url, urlState, currentSnapshot, dependencies);
-  const didHtmlChange = await dependencies.snapshots.htmlChanged(urlState.snapshotDirectory, currentSnapshot);
-  const extractorAuditRan = await auditExtractorAfterHtmlChange(
-    didHtmlChange,
+  const extractorAuditRan = await auditExtractorIfDue(
     url,
     notificationTrigger,
     urlState,
     currentSnapshot,
-    attemptState,
     dependencies,
   );
 
@@ -248,31 +226,23 @@ async function watchConfiguredUrl(
     organizationName: organization.name,
     comparison,
   }, dependencies);
-  if (comparison.state !== "changed") {
-    logger.debug("change judge is not needed.");
-    return {
+  const judgment = comparison.state === "changed"
+    ? zeroJobJudgment ?? await judgeChangedPage({
       url,
+      notificationTrigger,
+      snapshotDirectory: urlState.snapshotDirectory,
+      currentSnapshot,
       organizationName: organization.name,
-      state: comparison.state,
-      htmlChanged: didHtmlChange,
-      scriptAgentRan: organization.agentRan || extractorAuditRan,
-      judgment: null,
-    };
+      comparison,
+    }, dependencies)
+    : null;
+  if (extractorAuditRan) {
+    await dependencies.extractorAudits.recordSuccess(urlState.snapshotDirectory);
   }
-
-  const judgment = zeroJobJudgment ?? await judgeChangedPage({
-    url,
-    notificationTrigger,
-    snapshotDirectory: urlState.snapshotDirectory,
-    currentSnapshot,
-    organizationName: organization.name,
-    comparison,
-  }, dependencies);
   return {
     url,
     organizationName: organization.name,
-    state: "changed",
-    htmlChanged: didHtmlChange,
+    state: comparison.state,
     scriptAgentRan: organization.agentRan || extractorAuditRan,
     judgment,
   };
@@ -280,7 +250,6 @@ async function watchConfiguredUrl(
 async function preparePageRetry(
   error: unknown,
   attempt: number,
-  attemptState: PageAttemptState,
   currentSnapshot: HtmlSnapshotPath | null,
   dependencies: PageWatchDependencies,
 ): Promise<void> {
@@ -289,12 +258,6 @@ async function preparePageRetry(
     attemptCount: APPLICATION_CONFIG.pageChecks.attemptCount,
     error: errorDetail(error),
   });
-  if (
-    attemptState.htmlChangeCountIncremented
-    && attemptState.snapshotDirectory !== null
-  ) {
-    await dependencies.snapshots.rollbackHtmlChangeCount(attemptState.snapshotDirectory);
-  }
   if (currentSnapshot !== null) {
     await dependencies.snapshots.discardAttempt(currentSnapshot);
   }
@@ -316,17 +279,12 @@ async function watchTypedUrl(
 ): Promise<UrlWatchResult> {
   for (progress.attempts = 1; ; progress.attempts += 1) {
     let currentSnapshot: HtmlSnapshotPath | null = null;
-    const attemptState: PageAttemptState = {
-      htmlChangeCountIncremented: false,
-      snapshotDirectory: null,
-    };
     try {
       const state = await dependencies.pageState.classify(url);
       logger.debug("classified the page.", {
         state: state.state,
         snapshotDirectory: state.snapshotDirectory,
       });
-      attemptState.snapshotDirectory = state.snapshotDirectory;
       const renderSettleMs = progress.attempts === 1
         ? APPLICATION_CONFIG.snapshots.renderSettleMs
         : APPLICATION_CONFIG.snapshots.retryRenderSettleMs;
@@ -344,13 +302,12 @@ async function watchTypedUrl(
             notificationTrigger,
             state,
             currentSnapshot,
-            attemptState,
             dependencies,
           )
           : setUpUrl(url, notificationTrigger, state, currentSnapshot, dependencies)
       );
     } catch (error: unknown) {
-      await preparePageRetry(error, progress.attempts, attemptState, currentSnapshot, dependencies);
+      await preparePageRetry(error, progress.attempts, currentSnapshot, dependencies);
     }
   }
 }
@@ -401,7 +358,6 @@ async function runUrlCheck(
     result: result.state,
     organization: result.organizationName,
     judgment: result.judgment?.state ?? "not-needed",
-    htmlChanged: result.htmlChanged,
     extractorAgentRan: result.scriptAgentRan,
     attempts: progress.attempts,
     durationMs: Math.round(performance.now() - startedAt),

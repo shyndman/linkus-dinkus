@@ -14,7 +14,7 @@ export type ApplicationConfig = Readonly<{
   }>;
   pageChecks: Readonly<{
     concurrency: number;
-    extractorAuditInterval: number;
+    extractorAuditIntervalDays: number;
     attemptCount: number;
     retryDelayMs: number;
   }>;
@@ -44,8 +44,8 @@ export const APPLICATION_CONFIG = {
     lastCheckDateTimeRange: "lastCheckDateTime",
   },
   pageChecks: {
-    extractorAuditInterval: 5,
     concurrency: 6,
+    extractorAuditIntervalDays: 7,
     attemptCount: 3,
     retryDelayMs: 10_000,
   },

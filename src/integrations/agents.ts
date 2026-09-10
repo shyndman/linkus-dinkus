@@ -21,7 +21,7 @@ const EXTRACTOR_RUN_MESSAGES = {
     start: "starting extractor setup.",
     finish: "extractor setup finished.",
   },
-  "fifth-html-change": {
+  "scheduled-audit": {
     start: "starting the scheduled extractor audit.",
     finish: "extractor audit finished.",
   },
@@ -55,7 +55,7 @@ const EXTRACTOR_REASON_INSTRUCTIONS = {
 12. Make sure stdout is JSON \`{ markdown, jobCount }\`. The jobCount must equal the actual extracted count.
 13. Save the organization name at task.organizationNamePath.
 14. Finish only when the canonical Markdown contains all required data and the reported jobCount is correct.`,
-  "fifth-html-change": `Complete this audit workflow:
+  "scheduled-audit": `Complete this audit workflow:
 1. Inspect the supplied HTML and the saved extractor.
 2. Run the saved extractor against the supplied HTML.
 3. Compare the output with the data in the HTML.
