@@ -3,7 +3,7 @@ import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { basename, join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
 import { APPLICATION_CONFIG } from "../config.ts";
-import { getSiteLogTag, logger } from "../logger.ts";
+import { errorDetail, getSiteLogTag, logger } from "../logger.ts";
 import { PROJECT_ROOT, fail, getUrlSnapshotDirectory, runTool } from "../runtime.ts";
 
 const OUTER_HTML_EXPRESSION = "document.documentElement.outerHTML";
@@ -27,14 +27,14 @@ export async function storeHtmlSnapshot(
     await writeFile(objectPath, html, { encoding: "utf8", flag: "wx" });
   } catch (error: unknown) {
     if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) {
-      logger.error("could not save the HTML snapshot object.", { object: objectName });
+      logger.error("could not save the HTML snapshot object.", { path: objectPath, error: errorDetail(error) });
       throw error;
     }
   }
 
   const snapshotPath = join(snapshotDirectory, `snapshot-${utcTimestamp(capturedAt)}.html`);
   await symlink(join("objects", objectName), snapshotPath);
-  logger.info("saved the content-addressed HTML snapshot.", {
+  logger.debug("saved the content-addressed HTML snapshot.", {
     snapshot: basename(snapshotPath),
     object: objectName,
     bytes: Buffer.byteLength(html),
@@ -43,8 +43,9 @@ export async function storeHtmlSnapshot(
 }
 
 
-export async function capturePage(url: string): Promise<string> {
-  logger.info("preparing a rendered page snapshot.");
+export async function capturePage(url: string, renderSettleMs: number): Promise<string> {
+  const startedAt = performance.now();
+  logger.info("capturing the rendered page.");
 
   const snapshotDirectory = await getUrlSnapshotDirectory(url);
   const browserSession = getSiteLogTag();
@@ -54,17 +55,17 @@ export async function capturePage(url: string): Promise<string> {
   }
   const sessionArguments = ["--session", browserSession] as const;
   await mkdir(snapshotDirectory, { recursive: true });
-  logger.info("snapshot directory is ready. The browser will settle before capture.", {
-    settleMs: APPLICATION_CONFIG.snapshots.renderSettleMs,
+  logger.debug("snapshot directory is ready. The browser will settle before capture.", {
+    settleMs: renderSettleMs,
   });
   try {
     await runTool("bin/camou", [...sessionArguments, "open", url]);
     await runTool("bin/camou", [
       ...sessionArguments,
       "wait",
-      String(APPLICATION_CONFIG.snapshots.renderSettleMs),
+      String(renderSettleMs),
     ]);
-    logger.info("rendered page settled. Reading the document HTML.");
+    logger.debug("rendered page settled. Reading the document HTML.");
 
     const html = await runTool("bin/camou", [...sessionArguments, "eval", OUTER_HTML_EXPRESSION]);
     if (!html.trimStart().startsWith("<html")) {
@@ -73,12 +74,20 @@ export async function capturePage(url: string): Promise<string> {
       });
       throw new Error(`Camoufox returned invalid HTML for ${url}`);
     }
-    logger.info("browser returned a valid HTML document.", { bytes: Buffer.byteLength(html) });
+    logger.debug("browser returned a valid HTML document.", { bytes: Buffer.byteLength(html) });
 
     const snapshotPath = await storeHtmlSnapshot(snapshotDirectory, html, new Date());
+    logger.info("saved the rendered page.", {
+      snapshot: basename(snapshotPath),
+      bytes: Buffer.byteLength(html),
+      durationMs: Math.round(performance.now() - startedAt),
+    });
     return relative(PROJECT_ROOT, snapshotPath);
+  } catch (error: unknown) {
+    logger.error("page capture failed.", { url, error: errorDetail(error) });
+    throw error;
   } finally {
-    logger.info("closing the browser session.");
+    logger.debug("closing the browser session.");
     await runTool("bin/camou", [...sessionArguments, "close"]);
   }
 }
@@ -86,7 +95,7 @@ export async function capturePage(url: string): Promise<string> {
 async function main(): Promise<void> {
   const url = process.argv[2];
   if (!url) throw new Error("Usage: bin/capture-page <url>");
-  process.stdout.write(`${await capturePage(url)}\n`);
+  process.stdout.write(`${await capturePage(url, APPLICATION_CONFIG.snapshots.renderSettleMs)}\n`);
 }
 
 const entryPath = process.argv[1];

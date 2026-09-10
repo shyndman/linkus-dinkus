@@ -5,34 +5,59 @@ import { join } from "node:path";
 import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import test from "node:test";
 
-const EMPTY_RESULT_MARKDOWN = "# Job Openings\n\nWe currently have no open positions.\n";
-const EMPTY_STATE_FAILURE = /no job listings or explicit empty-state marker found/;
-
 type ExtractorCase = Readonly<{
   name: string;
   path: string;
-  explicitEmptyHtml: string;
-  ambiguousEmptyHtml: string;
+  withJobsHtml: string;
+  validEmptyHtml: string;
+  missingStructureHtml: string;
+  expectedJobTitle: string;
 }>;
 
 const EXTRACTOR_CASES: readonly ExtractorCase[] = [
   {
     name: "Workable",
     path: "snapshots/https-apply-workable-com-veritree/extract.ts",
-    explicitEmptyHtml: "<html><body><p>Sorry, no job openings at the moment.</p></body></html>",
-    ambiguousEmptyHtml: "<html><body><ul data-ui=\"list\"></ul></body></html>",
+    withJobsHtml:
+      '<html><body><ul data-ui="list"><li data-ui="job"><a href="/veritree/j/1/"></a>'
+      + '<div><h3 data-ui="job-title"><span>Restoration Lead</span></h3></div></li></ul></body></html>',
+    validEmptyHtml: '<html><body><ul data-ui="list"></ul></body></html>',
+    missingStructureHtml: "<html><body><main>careers</main></body></html>",
+    expectedJobTitle: "Restoration Lead",
   },
   {
     name: "BambooHR",
     path: "snapshots/https-bcinvasives-ca-about-careers/extract.ts",
-    explicitEmptyHtml: "<html><body><div class=\"BambooHR-ATS-board\"><div class=\"BambooHR-ATS-blankState\"><strong>We currently have no open positions.</strong></div></div></body></html>",
-    ambiguousEmptyHtml: "<html><body><div class=\"BambooHR-ATS-board\"></div></body></html>",
+    withJobsHtml:
+      '<html><body><div class="BambooHR-ATS-board"><ul><li>'
+      + '<a href="https://bcinvasives.ca/jobs/field-technician">Field Technician</a>'
+      + "</li></ul></div></body></html>",
+    validEmptyHtml: '<html><body><div class="BambooHR-ATS-board"></div></body></html>',
+    missingStructureHtml: "<html><body><main>careers</main></body></html>",
+    expectedJobTitle: "Field Technician",
   },
   {
     name: "ADP",
-    path: "snapshots/https-workforcenow-adp-com-mascsr-default-mdf-recruitment-recruitment-html-cid-b0f3dbb9-c0c3-450e-b942-8ef0c3d60ac5-ccid-19000101-000001-lang-en-ca/extract.ts",
-    explicitEmptyHtml: "<html><body><h1 id=\"tileCurrentOpenings\">Current Openings (0 of 0)</h1></body></html>",
-    ambiguousEmptyHtml: "<html><body><main>Recruitment</main></body></html>",
+    path:
+      "snapshots/https-workforcenow-adp-com-mascsr-default-mdf-recruitment-recruitment-html-cid-b0f3dbb9-c0c3-450e-b942-8ef0c3d60ac5-ccid-19000101-000001-lang-en-ca/extract.ts",
+    withJobsHtml:
+      '<html><body><h1 id="tileCurrentOpenings">Current Openings (1 of 1)</h1>'
+      + '<div id="job_item_view_main_div_123_1"><sdf-link id="lblTitle_123">Payroll Specialist</sdf-link>'
+      + '<div class="current-opening-locations">Vancouver, BC</div></div></body></html>',
+    validEmptyHtml: '<html><body><h1 id="tileCurrentOpenings">Current Openings (0 of 0)</h1></body></html>',
+    missingStructureHtml: "<html><body><main>Recruitment</main></body></html>",
+    expectedJobTitle: "Payroll Specialist",
+  },
+  {
+    name: "CPAWS",
+    path: "snapshots/https-cpawsbc-org-about-us-career-opportunities/extract.ts",
+    withJobsHtml:
+      '<html><body><div class="acf-innerblocks-container"><p>Current Career Opportunities</p>'
+      + '<a href="https://cpawsbc.org/jobs/marine-coordinator">Marine Coordinator</a></div></body></html>',
+    validEmptyHtml:
+      '<html><body><div class="acf-innerblocks-container"><p>Current Career Opportunities</p></div></body></html>',
+    missingStructureHtml: "<html><body><main>about us</main></body></html>",
+    expectedJobTitle: "Marine Coordinator",
   },
 ];
 
@@ -41,7 +66,7 @@ function runExtractor(extractorPath: string, html: string): SpawnSyncReturns<str
   const snapshotPath = join(directory, "snapshot.html");
   try {
     writeFileSync(snapshotPath, html, "utf8");
-    return spawnSync("pnpm", ["exec", "tsx", extractorPath, snapshotPath], {
+    return spawnSync(process.execPath, ["--import", "tsx", extractorPath, snapshotPath], {
       cwd: process.cwd(),
       encoding: "utf8",
     });
@@ -50,21 +75,47 @@ function runExtractor(extractorPath: string, html: string): SpawnSyncReturns<str
   }
 }
 
+function parseExtraction(stdout: string, detail: string): { markdown: string; jobCount: number } {
+  const parsed: unknown = JSON.parse(stdout);
+  assert.deepEqual(
+    Object.keys(parsed as object).sort(),
+    ["jobCount", "markdown"],
+    `${detail}: unexpected extraction result keys`,
+  );
+  const result = parsed as { markdown: string; jobCount: number };
+  assert.equal(typeof result.markdown, "string", `${detail}: markdown must be a string`);
+  assert.equal(
+    typeof result.jobCount,
+    "number",
+    `${detail}: jobCount must be a number`,
+  );
+  assert.ok(Number.isInteger(result.jobCount) && result.jobCount >= 0, `${detail}: jobCount must be a nonnegative integer`);
+  return result;
+}
+
 for (const extractorCase of EXTRACTOR_CASES) {
   const skip = !existsSync(extractorCase.path);
-  test(`${extractorCase.name} extractor accepts explicit empty-state evidence`, { skip }, (): void => {
-    const result = runExtractor(extractorCase.path, extractorCase.explicitEmptyHtml);
+  test(`${extractorCase.name} extractor counts extracted job rows`, { skip }, (): void => {
+    const result = runExtractor(extractorCase.path, extractorCase.withJobsHtml);
 
     assert.equal(result.status, 0, result.stderr);
-    assert.equal(result.stdout, EMPTY_RESULT_MARKDOWN);
-    assert.equal(result.stderr, "");
+    const extraction = parseExtraction(result.stdout, extractorCase.name);
+    assert.equal(extraction.jobCount, 1);
+    assert.match(extraction.markdown, new RegExp(extractorCase.expectedJobTitle));
   });
 
-  test(`${extractorCase.name} extractor rejects an ambiguous empty result`, { skip }, (): void => {
-    const result = runExtractor(extractorCase.path, extractorCase.ambiguousEmptyHtml);
+  test(`${extractorCase.name} extractor accepts a valid empty capture without site wording`, { skip }, (): void => {
+    const result = runExtractor(extractorCase.path, extractorCase.validEmptyHtml);
+
+    assert.equal(result.status, 0, result.stderr);
+    const extraction = parseExtraction(result.stdout, extractorCase.name);
+    assert.equal(extraction.jobCount, 0);
+  });
+
+  test(`${extractorCase.name} extractor rejects a snapshot with the job structure missing`, { skip }, (): void => {
+    const result = runExtractor(extractorCase.path, extractorCase.missingStructureHtml);
 
     assert.notEqual(result.status, 0);
-    assert.match(result.stderr, EMPTY_STATE_FAILURE);
-    assert.equal(result.stdout, "");
+    assert.equal(result.stdout.trim(), "");
   });
 }

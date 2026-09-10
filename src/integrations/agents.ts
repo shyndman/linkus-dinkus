@@ -10,7 +10,7 @@ import {
   readJudgmentResult,
   type JudgmentResult,
 } from "../page-watch/judgment.ts";
-import type { JudgeAgentTask, ScriptAgentTask } from "../page-watch/ports.ts";
+import type { JudgeAgentTask, ScriptAgentTask, ZeroJobInspectionTask } from "../page-watch/ports.ts";
 
 const STYLED_OMP_RUNNER_PATH = resolve(PROJECT_ROOT, "src", "integrations", "run-omp-with-styled-output.ts");
 
@@ -46,20 +46,24 @@ const EXTRACTOR_REASON_INSTRUCTIONS = {
 3. Run \`bin/defuddle-snapshot <currentSnapshot>\` to create draft Markdown.
 4. Compare the draft with every extraction expectation.
 5. Inspect the supplied HTML when the draft loses required content or relationships.
-6. Identify the page's explicit evidence for zero open jobs.
-7. Treat a missing job list without that evidence as an extraction failure.
-8. Create \`snapshots/<url-slug>/extract\` and its typed source file.
-9. Run \`bin/extract-snapshot <currentSnapshot>\`.
-10. Compare the canonical Markdown with every extraction expectation.
-11. Save the organization name at task.organizationNamePath.
-12. Finish only when the canonical Markdown contains all required data.`,
+6. Determine the actual job count from the completely rendered page.
+7. Treat a zero count as valid without any explicit empty statement.
+8. Treat an observed bot block, a missing job list, or an unloaded job-list structure as an extraction failure.
+9. Create \`snapshots/<url-slug>/extract\` and its typed source file.
+10. Run \`bin/extract-snapshot <currentSnapshot>\`.
+11. Compare the canonical Markdown with every extraction expectation.
+12. Make sure stdout is JSON \`{ markdown, jobCount }\`. The jobCount must equal the actual extracted count.
+13. Save the organization name at task.organizationNamePath.
+14. Finish only when the canonical Markdown contains all required data and the reported jobCount is correct.`,
   "fifth-html-change": `Complete this audit workflow:
 1. Inspect the supplied HTML and the saved extractor.
 2. Run the saved extractor against the supplied HTML.
 3. Compare the output with the data in the HTML.
-4. Make sure zero extracted jobs require explicit empty-state evidence from the page.
-5. If the extractor is wrong, fix it and test it again.
-6. If the extractor is correct, do not change it.`,
+4. Treat a zero extracted count as valid without any explicit empty statement.
+5. Treat an observed bot block, a missing job list, or an unloaded job-list structure as an extraction failure.
+6. Make sure stdout is JSON \`{ markdown, jobCount }\` with the actual extracted count.
+7. If the extractor is wrong, fix it and test it again.
+8. If the extractor is correct, do not change it.`,
   "organization-name": `Complete this organization-name workflow:
 1. Inspect the supplied HTML.
 2. Identify the organization that owns the jobs page.
@@ -74,23 +78,25 @@ The fixed organization-name path is \`snapshots/<url-slug>/organization-name.txt
 The command contract is \`extract <snapshot.html>\`.
 The extractor must read one local HTML snapshot.
 The extractor must make no network requests.
-The extractor must write canonical Markdown to standard output.
+The extractor must write JSON \`{ markdown, jobCount }\` to standard output.
+The extractor must put the canonical Markdown in the markdown field.
 The extractor must write failure details to standard error.
 The extractor must return a nonzero status after a failure.
 The extractor must return identical output for identical input.
 The extractor must exclude timestamps and run-specific values from the Markdown.
 The extractor must preserve data required by the notification trigger.
 When jobs exist, the extractor must write every required job to the Markdown.
-When the page explicitly states that no jobs exist, write a stable empty-result marker.
-When zero jobs lack explicit page evidence, write failure details and return a nonzero status.
-Treat a missing, unloaded, blocked, or changed job-list structure as a failure.
+The jobCount field must be the nonnegative deterministic actual extracted count.
+A zero job count is valid without any explicit empty statement.
+Treat observed bot blocks and missing, unloaded, or changed job-list structures as failures.
 Use Cheerio for HTML inspection and repair.
 Use \`bin/defuddle\` when its Markdown output is useful.
-The executable \`extract\` file can call typed TypeScript through \`pnpm exec tsx\`.
+The executable \`extract\` file must use \`node --import tsx\` to run TypeScript. Package-manager status output must not enter stdout.
 HTML snapshots are immutable evidence.
 Each timestamped HTML path links to its content-addressed object.
 Draft Markdown is inspection output. Markdown without \`.draft\` is canonical comparison data.
-The poll cycle deletes snapshot files after seven days.
+The collector keeps the newest accepted snapshot, even after seven days, to preserve the baseline during unresolved incidents.
+Other snapshots expire after seven days.
 The poll cycle then deletes each HTML object without a timestamped link.
 \`bin/defuddle-snapshot <snapshot.html>\` creates draft Markdown.
 \`bin/extract-snapshot <snapshot.html>\` runs the saved extractor and creates canonical Markdown.
@@ -114,10 +120,30 @@ Do not edit the extractor or a snapshot.
 9. If URL recovery fails, submit the judgment without a link.
 10. If a system problem prevents a valid judgment, submit a \`failure\` judgment with the problem.
 Call \`submit-judgment\` exactly once.
-The workflow sends failure text without changes.
+The workflow sends one incident alert for a failed judgment and retains the previous accepted snapshot.
 The workflow places matched text under the saved organization-name heading.
 Do not repeat the organization name in the matched text.
 Use URL recovery only for judgment text.
+Do not change the canonical Markdown.`;
+
+const ZERO_JOB_INSPECTION_INSTRUCTIONS = `You are the zero-job inspector. Do only this role.
+Run all commands from the project root.
+The task supplies the URL, snapshot directory, current HTML, previous canonical Markdown, previous job count, and organization name.
+The current capture reports zero jobs after a previous nonzero count.
+Do not edit the extractor or a snapshot. Do not send notifications.
+1. Judge only the supplied captured HTML snapshot.
+2. Read the previous canonical Markdown to see what the page offered before.
+3. Determine whether the captured page is complete and legitimately offers zero jobs.
+4. A valid page may have a normal empty jobs section without any explicit empty statement.
+5. Never approve a zero count just because the page contains no job links or the fetch succeeded.
+6. Treat an observed bot block, a login wall, a missing jobs section, or an unloaded structure as an invalid capture.
+7. Inspect the live page with the browser only to explain the page's structure or resolve ambiguity.
+8. A complete live page never validates an incomplete or blocked captured snapshot.
+9. Submit a \`matched\` judgment only when the captured page is complete and legitimately offers zero jobs. Include the observed evidence.
+10. For a blocked, incomplete, or invalid capture, submit a \`failure\` judgment with the reason and observed evidence.
+The workflow logs the failure text and saves it with the incident.
+11. Submit a \`not-matched\` judgment when you cannot determine whether the empty capture is legitimate.
+Call \`submit-judgment\` exactly once.
 Do not change the canonical Markdown.`;
 
 async function runOmpAgent(
@@ -127,7 +153,7 @@ async function runOmpAgent(
   environment: Readonly<Record<string, string>> = {},
 ): Promise<void> {
   const startedAt = performance.now();
-  logger.info("starting an agent.", {
+  logger.debug("starting an agent.", {
     model: APPLICATION_CONFIG.agents.model,
     timeLimitSeconds: Number(maxTime),
   });
@@ -154,20 +180,21 @@ async function runOmpAgent(
       logger.error("agent could not start.", { error: error.message });
       rejectAgent(new Error(`omp failed to start: ${error.message}`));
     });
-    child.once("close", (status: number | null): void => {
+    child.once("close", (status: number | null, signal: NodeJS.Signals | null): void => {
       if (startFailed) return;
       if (status !== 0) {
         logger.error("agent failed.", {
           durationMs: Math.round(performance.now() - startedAt),
           status,
+          signal,
         });
-        rejectAgent(new Error(`omp failed with exit status ${status}`));
+        rejectAgent(new Error(signal === null ? `omp failed with exit status ${status}` : `omp stopped with signal ${signal}`));
         return;
       }
       resolveAgent();
     });
   });
-  logger.info("agent finished.", {
+  logger.debug("agent finished.", {
     durationMs: Math.round(performance.now() - startedAt),
   });
 }
@@ -181,6 +208,7 @@ Task: ${JSON.stringify(task)}`;
 }
 
 export async function runExtractorAgent(task: ScriptAgentTask): Promise<void> {
+  const startedAt = performance.now();
   const messages = EXTRACTOR_RUN_MESSAGES[task.reason];
   logger.info(messages.start, { snapshot: basename(task.currentSnapshot) });
   await runOmpAgent(
@@ -188,7 +216,7 @@ export async function runExtractorAgent(task: ScriptAgentTask): Promise<void> {
     APPLICATION_CONFIG.agents.extractorMaxTimeSeconds,
     buildExtractorAgentPrompt(task),
   );
-  logger.info(messages.finish);
+  logger.info(messages.finish, { durationMs: Math.round(performance.now() - startedAt) });
 }
 
 export function buildChangeJudgePrompt(task: JudgeAgentTask): string {
@@ -198,7 +226,33 @@ Task: ${JSON.stringify(task)}`;
 
 export async function runChangeJudge(task: JudgeAgentTask): Promise<JudgmentResult> {
   logger.info("starting the change judge.", { snapshot: basename(task.currentSnapshot) });
-  const prompt = buildChangeJudgePrompt(task);
+  return runJudgmentAgent(
+    "could not read the change judgment.",
+    "Could not read the change judgment",
+    buildChangeJudgePrompt(task),
+  );
+}
+
+export function buildZeroJobInspectionPrompt(task: ZeroJobInspectionTask): string {
+  return `${ZERO_JOB_INSPECTION_INSTRUCTIONS}
+Task: ${JSON.stringify(task)}`;
+}
+
+export async function runZeroJobInspection(task: ZeroJobInspectionTask): Promise<JudgmentResult> {
+  logger.info("starting the zero-job inspector.", { snapshot: basename(task.currentSnapshot) });
+  return runJudgmentAgent(
+    "could not read the zero-job inspection judgment.",
+    "Could not read the zero-job inspection judgment",
+    buildZeroJobInspectionPrompt(task),
+  );
+}
+
+async function runJudgmentAgent(
+  readErrorLog: string,
+  readErrorMessage: string,
+  prompt: string,
+): Promise<JudgmentResult> {
+  const startedAt = performance.now();
   const resultDirectory = await mkdtemp(join(tmpdir(), "page-watch-judgment-"));
   const resultPath = join(resultDirectory, "result.json");
   try {
@@ -210,12 +264,15 @@ export async function runChangeJudge(task: JudgeAgentTask): Promise<JudgmentResu
     );
     try {
       const judgment = await readJudgmentResult(resultPath);
-      logger.info("change judge finished.", { judgment: judgment.state });
+      logger.info("the judgment is ready.", {
+        judgment: judgment.state,
+        durationMs: Math.round(performance.now() - startedAt),
+      });
       return judgment;
     } catch (error: unknown) {
       const detail = errorDetail(error);
-      logger.error("could not read the change judgment.", { error: detail });
-      throw new Error(`Could not read the change judgment: ${detail}`);
+      logger.error(readErrorLog, { path: resultPath, error: detail });
+      throw new Error(`${readErrorMessage}: ${detail}`);
     }
   } finally {
     await rm(resultDirectory, { recursive: true, force: true });

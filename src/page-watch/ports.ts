@@ -50,14 +50,25 @@ export type JudgeAgentTask = Readonly<{
   comparison: Extract<SnapshotComparison, Readonly<{ state: "changed" }>>;
 }>;
 
+export type ZeroJobInspectionTask = Readonly<{
+  url: WatchedUrl;
+  snapshotDirectory: SnapshotDirectory;
+  currentSnapshot: HtmlSnapshotPath;
+  previousSnapshot: CanonicalSnapshotPath;
+  previousJobCount: number;
+  organizationName: OrganizationName;
+}>;
+
 export type PageStateStore = Readonly<{
   classify: (url: WatchedUrl) => Promise<UrlStateResult>;
-  recordResult: (url: WatchedUrl, result: UrlResult) => Promise<void>;
+  recordResult: (url: WatchedUrl, result: UrlResult, detail: string | null) => Promise<void>;
 }>;
 
 export type SnapshotStore = Readonly<{
-  capture: (url: WatchedUrl) => Promise<HtmlSnapshotPath>;
+  capture: (url: WatchedUrl, renderSettleMs: number) => Promise<HtmlSnapshotPath>;
   extract: (snapshot: HtmlSnapshotPath) => Promise<CanonicalSnapshotPath>;
+  jobCount: (snapshot: CanonicalSnapshotPath) => Promise<number>;
+  recordInspection: (snapshot: CanonicalSnapshotPath, previousJobCount: number, judgment: JudgmentResult) => Promise<void>;
   compare: (snapshotDirectory: SnapshotDirectory) => Promise<SnapshotComparison>;
   htmlChanged: (
     snapshotDirectory: SnapshotDirectory,
@@ -95,6 +106,9 @@ export type PageWatchDependencies = Readonly<{
   organizations: OrganizationStore;
   extractorAgent: ExtractorAgent;
   changeJudge: ChangeJudge;
+  zeroJobInspector: Readonly<{
+    run: (task: ZeroJobInspectionTask) => Promise<JudgmentResult>;
+  }>;
   notifier: Notifier;
   retryClock: RetryClock;
 }>;

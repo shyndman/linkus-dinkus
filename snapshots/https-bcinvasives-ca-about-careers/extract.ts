@@ -2,8 +2,7 @@ import { readFileSync } from "node:fs";
 import * as cheerio from "cheerio";
 
 const BASE_URL = "https://bcinvasives.ca";
-const EMPTY_STATE_TEXT = "We currently have no open positions.";
-const EMPTY_RESULT_MARKDOWN = `# Job Openings\n\n${EMPTY_STATE_TEXT}\n`;
+const EMPTY_RESULT_MARKDOWN = "# Job Openings\n\nWe currently have no open positions.\n";
 
 interface Job {
   title: string;
@@ -48,22 +47,17 @@ function main(): void {
     }
   });
 
-  if (jobs.length === 0) {
-    const emptyStateText = clean(board.find(".BambooHR-ATS-blankState strong").first().text());
-    if (emptyStateText !== EMPTY_STATE_TEXT) {
-      console.error("extract: no job listings or explicit empty-state marker found in snapshot");
-      process.exit(1);
-    }
-    process.stdout.write(EMPTY_RESULT_MARKDOWN);
-    return;
-  }
-
-  const lines = jobs
-    .slice()
-    .sort((a, b) => a.title.localeCompare(b.title))
-    .map((job) => (job.link ? `- ${job.title}: ${job.link}` : `- ${job.title}`));
-
-  process.stdout.write(`# Job Openings\n\n${lines.join("\n")}\n`);
+  // A loaded board without job links is a valid zero result; the blank-state
+  // marker is optional and no site statement is required.
+  const markdown =
+    jobs.length === 0
+      ? EMPTY_RESULT_MARKDOWN
+      : `# Job Openings\n\n${jobs
+          .slice()
+          .sort((a, b) => a.title.localeCompare(b.title))
+          .map((job) => (job.link ? `- ${job.title}: ${job.link}` : `- ${job.title}`))
+          .join("\n")}\n`;
+  process.stdout.write(`${JSON.stringify({ markdown, jobCount: jobs.length })}\n`);
 }
 
 try {

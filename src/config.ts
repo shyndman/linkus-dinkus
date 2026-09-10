@@ -15,13 +15,13 @@ export type ApplicationConfig = Readonly<{
   pageChecks: Readonly<{
     concurrency: number;
     extractorAuditInterval: number;
-    failureNotificationThreshold: number;
     attemptCount: number;
     retryDelayMs: number;
   }>;
   snapshots: Readonly<{
     retentionDays: number;
     renderSettleMs: number;
+    retryRenderSettleMs: number;
   }>;
   systemd: Readonly<{
     timerUnitName: string;
@@ -46,13 +46,13 @@ export const APPLICATION_CONFIG = {
   pageChecks: {
     concurrency: 3,
     extractorAuditInterval: 5,
-    failureNotificationThreshold: 3,
     attemptCount: 3,
     retryDelayMs: 10_000,
   },
   snapshots: {
     retentionDays: 7,
-    renderSettleMs: 10_000,
+    renderSettleMs: 6_000,
+    retryRenderSettleMs: 25_000,
   },
   systemd: {
     timerUnitName: "linkus-dinkus.timer",

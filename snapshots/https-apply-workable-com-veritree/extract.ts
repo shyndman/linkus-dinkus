@@ -2,7 +2,6 @@ import { readFileSync } from "node:fs";
 import * as cheerio from "cheerio";
 
 const BASE_URL = "https://apply.workable.com";
-const EMPTY_STATE_TEXT = "Sorry, no job openings at the moment.";
 const EMPTY_RESULT_MARKDOWN = "# Job Openings\n\nWe currently have no open positions.\n";
 
 function clean(text: string): string {
@@ -24,36 +23,30 @@ function main(): void {
   }
 
   const $ = cheerio.load(html);
-  const jobs: Array<{ title: string; link: string }> = [];
+  const list = $('ul[data-ui="list"]').first();
+  if (list.length === 0) {
+    console.error("extract: job list (ul[data-ui=list]) not found in snapshot");
+    process.exit(1);
+  }
 
-  $('li[data-ui="job"]').each((_index, element) => {
+  const jobs: Array<{ title: string; link: string }> = [];
+  list.find('li[data-ui="job"]').each((_index, element) => {
     const title = clean($(element).find('[data-ui="job-title"] span').first().text());
     const href = $(element).find("a[href]").attr("href") ?? "";
     if (!title) return;
-    const link = href
-      ? new URL(href, BASE_URL).toString()
-      : "";
+    const link = href ? new URL(href, BASE_URL).toString() : "";
     jobs.push({ title, link });
   });
 
-  if (jobs.length === 0) {
-    const hasExplicitEmptyState = $("p").toArray().some(
-      (element): boolean => clean($(element).text()) === EMPTY_STATE_TEXT,
-    );
-    if (!hasExplicitEmptyState) {
-      console.error("extract: no job listings or explicit empty-state marker found in snapshot");
-      process.exit(1);
-    }
-    process.stdout.write(EMPTY_RESULT_MARKDOWN);
-    return;
-  }
-
-  const lines = jobs
-    .slice()
-    .sort((a, b) => a.title.localeCompare(b.title))
-    .map((job) => (job.link ? `- ${job.title}: ${job.link}` : `- ${job.title}`));
-
-  process.stdout.write(`# Job Openings\n\n${lines.join("\n")}\n`);
+  const markdown =
+    jobs.length === 0
+      ? EMPTY_RESULT_MARKDOWN
+      : `# Job Openings\n\n${jobs
+          .slice()
+          .sort((a, b) => a.title.localeCompare(b.title))
+          .map((job) => (job.link ? `- ${job.title}: ${job.link}` : `- ${job.title}`))
+          .join("\n")}\n`;
+  process.stdout.write(`${JSON.stringify({ markdown, jobCount: jobs.length })}\n`);
 }
 
 try {

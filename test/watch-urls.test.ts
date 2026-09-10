@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import test from "node:test";
 import { tmpdir } from "node:os";
-import type { SnapshotComparison } from "../src/snapshots/compare.ts";
+import { compareSnapshots, type SnapshotComparison } from "../src/snapshots/compare.ts";
+import { extractSnapshot, readSnapshotJobCount, recordSnapshotInspection } from "../src/snapshots/extract.ts";
+import { discardSnapshotAttempt } from "../src/snapshots/discard-attempt.ts";
 import {
   htmlChanged,
   incrementHtmlChangeCount,
@@ -24,6 +26,7 @@ import type {
   JudgeAgentTask,
   PageWatchDependencies,
   ScriptAgentTask,
+  ZeroJobInspectionTask,
 } from "../src/page-watch/ports.ts";
 import { watchUrl, watchUrls } from "../src/page-watch/watch-urls.ts";
 import {
@@ -50,7 +53,7 @@ const CHANGED_COMPARISON: SnapshotComparison = {
 
 type DependencyOverrides = Readonly<{
   classifyUrl: (url: string) => Promise<Readonly<{ state: UrlState; snapshotDirectory: string }>>;
-  capturePage: (url: string) => Promise<string>;
+  capturePage: (url: string, renderSettleMs: number) => Promise<string>;
   extractSnapshot: (snapshot: string) => Promise<string>;
   compareSnapshots: (snapshotDirectory: string) => Promise<SnapshotComparison>;
   htmlChanged: (snapshotDirectory: string, currentSnapshot: string) => Promise<boolean>;
@@ -58,8 +61,10 @@ type DependencyOverrides = Readonly<{
   readOrganizationName: (snapshotDirectory: string) => Promise<string | null>;
   runScriptAgent: (task: ScriptAgentTask) => Promise<void>;
   runJudgeAgent: (task: JudgeAgentTask) => Promise<JudgmentResult>;
+  readJobCount: (snapshot: string) => Promise<number>;
+  inspectZeroJobs: (task: ZeroJobInspectionTask) => Promise<JudgmentResult>;
   sendNotification: (text: string) => Promise<void>;
-  recordResult: (url: string, result: "success" | "failure") => Promise<void>;
+  recordResult: (url: string, result: "success" | "failure", detail: string | null) => Promise<void>;
   collectExpiredSnapshots: () => Promise<void>;
   discardSnapshotAttempt: (snapshot: string) => Promise<void>;
   rollbackHtmlChangeCount: (snapshotDirectory: string) => Promise<void>;
@@ -134,8 +139,10 @@ function makeDependencies(
       recordResult,
     },
     snapshots: {
-      capture: async (url) => HtmlSnapshotPathSchema.parse(await capturePage(url)),
+      capture: async (url, renderSettleMs) => HtmlSnapshotPathSchema.parse(await capturePage(url, renderSettleMs)),
       extract: async (snapshot) => CanonicalSnapshotPathSchema.parse(await extractSnapshot(snapshot)),
+      jobCount: overrides.readJobCount ?? (async () => 1),
+      recordInspection: async () => {},
       compare: compareSnapshots,
       htmlChanged: compareHtml,
       incrementHtmlChangeCount: incrementCount,
@@ -151,6 +158,9 @@ function makeDependencies(
     },
     extractorAgent: { run: runScriptAgent },
     changeJudge: { run: runJudgeAgent },
+    zeroJobInspector: {
+      run: overrides.inspectZeroJobs ?? (async () => { throw new Error("Unexpected zero-job inspection"); }),
+    },
     notifier: { send: sendNotification },
     retryClock: { wait: waitForRetry },
   };
@@ -290,19 +300,24 @@ test("returns matched judgment text without sending it", async (): Promise<void>
   assert.ok(!calls.some((call: string): boolean => call.startsWith("send-notification:")));
 });
 
-test("sends failure judgment text and keeps the URL check successful", async (): Promise<void> => {
+test("keeps failed judgments out of accepted results and records the reason", async (): Promise<void> => {
   const calls: string[] = [];
   const text = "The extractor omitted the job links.";
+  let recordedDetail: string | null = null;
   const operations = makeDependencies(calls, {
     compareSnapshots: async (): Promise<SnapshotComparison> => CHANGED_COMPARISON,
     runJudgeAgent: async (): Promise<JudgmentResult> => ({ state: "failure", text }),
+    recordResult: async (_url, result, detail) => {
+      assert.equal(result, "failure");
+      recordedDetail = detail;
+    },
   });
 
-  await watchUrls({ notificationTrigger: "notify for new jobs", urls: [URL] }, operations);
-
-  assert.ok(calls.includes(`send-notification:${text}`));
-  assert.ok(calls.includes("record-success"));
-  assert.ok(!calls.includes("record-failure"));
+  const results = await watchUrls({ notificationTrigger: "notify for new jobs", urls: [URL] }, operations);
+  assert.deepEqual(results, []);
+  assert.equal(recordedDetail, text);
+  assert.equal(calls.filter(call => call.startsWith("discard-attempt:")).length, 3);
+  assert.ok(!calls.some(call => call.startsWith("send-notification:")));
 });
 
 test("sends one consolidated message with organization sections", async (): Promise<void> => {
@@ -356,13 +371,11 @@ test("sends matched judgments when another page check fails", async (): Promise<
     }),
   });
 
-  await assert.rejects(
-    watchUrls({
-      notificationTrigger: "notify for new jobs",
-      urls: [matchedUrl, failedUrl],
-    }, operations),
-    /capture failed/,
-  );
+  const results = await watchUrls({
+    notificationTrigger: "notify for new jobs",
+    urls: [matchedUrl, failedUrl],
+  }, operations);
+  assert.deepEqual(results.map(result => result.url), [matchedUrl]);
 
   assert.ok(calls.includes("send-notification:Matched Organization\nAdded matched role."));
   assert.ok(calls.includes("record-success"));
@@ -480,7 +493,34 @@ test("retries a page stream after extraction failures", async (): Promise<void> 
   assert.equal(calls.filter((call: string): boolean => call === "record-success").length, 1);
 });
 
-test("collects expired snapshots after a failed poll cycle", async (): Promise<void> => {
+test("recovers an incomplete capture with a longer render wait on retry", async (): Promise<void> => {
+  const calls: string[] = [];
+  const boardReadyMs = 20_000;
+  let boardLoaded = false;
+  let captureCount = 0;
+  const dependencies = makeDependencies(calls, {
+    capturePage: async (_url: string, renderSettleMs: number): Promise<string> => {
+      captureCount += 1;
+      boardLoaded = renderSettleMs >= boardReadyMs;
+      return CURRENT_SNAPSHOT;
+    },
+    extractSnapshot: async (): Promise<string> => {
+      if (!boardLoaded) throw new Error("BambooHR job board not found in snapshot");
+      return CURRENT_SNAPSHOT.replace(/\.html$/, ".md");
+    },
+  });
+
+  const results = await watchUrls(
+    { notificationTrigger: "notify for new jobs", urls: [URL] },
+    dependencies,
+  );
+
+  assert.equal(results[0]?.state, "unchanged");
+  assert.equal(captureCount, 2);
+  assert.equal(calls.includes("record-failure"), false);
+});
+
+test("finishes a poll with unresolved pages after recording their alerts", async (): Promise<void> => {
   const calls: string[] = [];
   const operations = makeDependencies(calls, {
     capturePage: async (): Promise<never> => {
@@ -488,10 +528,8 @@ test("collects expired snapshots after a failed poll cycle", async (): Promise<v
     },
   });
 
-  await assert.rejects(
-    watchUrls({ notificationTrigger: "notify for new jobs", urls: [URL] }, operations),
-    /capture failed/,
-  );
+  const results = await watchUrls({ notificationTrigger: "notify for new jobs", urls: [URL] }, operations);
+  assert.deepEqual(results, []);
   assert.equal(calls.at(-1), "collect-expired-snapshots");
   assert.equal(calls.filter((call: string): boolean => call === "classify").length, 3);
   assert.equal(calls.filter((call: string): boolean => call === "record-failure").length, 1);
@@ -542,4 +580,113 @@ test("runs at most three page checks at one time", async (): Promise<void> => {
 
   assert.deepEqual(outcome.results.map((result): string => result.url), urls);
   assert.deepEqual(outcome.failures, []);
+});
+
+test("accepts zero-job baselines and stable empty pages without inspection", async () => {
+  const calls: string[] = [];
+  const operations = makeDependencies(calls, {
+    readJobCount: async () => 0,
+    compareSnapshots: async () => ({ state: "baseline", current: UNCHANGED_COMPARISON.current }),
+  });
+  assert.equal((await watchUrl(URL, "new jobs", operations)).state, "baseline");
+  const stable = makeDependencies(calls, { readJobCount: async () => 0 });
+  assert.equal((await watchUrl(URL, "new jobs", stable)).state, "unchanged");
+  assert.ok(!calls.some(call => call.startsWith("send-notification:")));
+});
+
+test("inspects a drop to zero and reports confirmed closure even for a new-job trigger", async () => {
+  const calls: string[] = [];
+  const operations = makeDependencies(calls, {
+    compareSnapshots: async () => CHANGED_COMPARISON,
+    readJobCount: async path => path === CHANGED_COMPARISON.current ? 0 : 4,
+    inspectZeroJobs: async task => {
+      assert.equal(task.previousJobCount, 4);
+      return { state: "matched", text: "The complete career section is empty." };
+    },
+    runJudgeAgent: async () => { throw new Error("The confirmed closure must not use the new-job trigger"); },
+  });
+  const results = await watchUrls({ urls: [URL], notificationTrigger: "new jobs only" }, operations);
+  assert.equal(results[0]?.judgment?.state, "matched");
+  assert.ok(calls.some(call => call.includes("No jobs remain.") && call.startsWith("send-notification:")));
+});
+
+test("discards every unresolved zero capture and accepts the previous count on recovery", async () => {
+  const calls: string[] = [];
+  let currentCount = 0;
+  let discarded = 0;
+  const statuses: Array<Readonly<{ result: string; detail: string | null }>> = [];
+  const operations = makeDependencies(calls, {
+    compareSnapshots: async () => currentCount === 0 ? CHANGED_COMPARISON : UNCHANGED_COMPARISON,
+    readJobCount: async path => path === CHANGED_COMPARISON.current ? currentCount : 4,
+    inspectZeroJobs: async () => ({ state: "failure", text: "The job board shows a bot challenge." }),
+    discardSnapshotAttempt: async () => { discarded += 1; },
+    recordResult: async (_url, result, detail) => { statuses.push({ result, detail }); },
+  });
+  assert.deepEqual(await watchUrls({ urls: [URL], notificationTrigger: "new jobs" }, operations), []);
+  assert.equal(discarded, 3);
+  assert.deepEqual(statuses, [{ result: "failure", detail: "The job board shows a bot challenge." }]);
+  currentCount = 4;
+  const results = await watchUrls({ urls: [URL], notificationTrigger: "new jobs" }, operations);
+  assert.equal(results[0]?.state, "unchanged");
+  assert.deepEqual(statuses[1], { result: "success", detail: null });
+  assert.ok(!calls.some(call => call.startsWith("send-notification:")));
+});
+
+test("retains the accepted files across an unresolved zero-job incident", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "page-watch-zero-"));
+  const previous = join(directory, "snapshot-20260826T110000Z.html");
+  const current = join(directory, "snapshot-20260826T120000Z.html");
+  const extractor = resolve("snapshots/https-apply-workable-com-veritree/extract.ts");
+  const completePage = (jobs: string): string =>
+    `<html><body><ul data-ui="list">${jobs}</ul></body></html>`;
+  const jobs = '<li data-ui="job"><a href="/jobs/biologist"><h3 data-ui="job-title"><span>Biologist</span></h3></a></li>';
+  let capturedJobs = "";
+  const calls: string[] = [];
+  try {
+    writeFileSync(join(directory, "extract"), `#!/bin/sh\nexec "${process.execPath}" --import tsx "${extractor}" "$@"\n`, { mode: 0o755 });
+    writeFileSync(previous, completePage(jobs));
+    const acceptedMarkdown = await extractSnapshot(previous);
+    const operations = makeDependencies(calls, {
+      classifyUrl: async () => ({ state: "configured", snapshotDirectory: directory }),
+      capturePage: async () => {
+        writeFileSync(current, completePage(capturedJobs));
+        return current;
+      },
+      extractSnapshot,
+      compareSnapshots,
+      readJobCount: readSnapshotJobCount,
+      inspectZeroJobs: async () => ({ state: "failure", text: "The live board remains uncertain." }),
+      discardSnapshotAttempt: async snapshot => discardSnapshotAttempt(HtmlSnapshotPathSchema.parse(snapshot)),
+    });
+    const dependencies: PageWatchDependencies = {
+      ...operations,
+      snapshots: { ...operations.snapshots, recordInspection: recordSnapshotInspection },
+    };
+    assert.deepEqual(await watchUrls({ urls: [URL], notificationTrigger: "new jobs" }, dependencies), []);
+    assert.equal(existsSync(current), false);
+    assert.equal(existsSync(current.replace(".html", ".md")), false);
+    assert.equal(existsSync(acceptedMarkdown), true);
+    assert.equal(await readSnapshotJobCount(acceptedMarkdown), 1);
+    const retained = await compareSnapshots(directory);
+    assert.equal(retained.state, "baseline");
+    capturedJobs = jobs;
+    const recovered = await watchUrls({ urls: [URL], notificationTrigger: "new jobs" }, dependencies);
+    assert.equal(recovered[0]?.state, "unchanged");
+    assert.ok(!calls.some(call => call.startsWith("send-notification:")));
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("surfaces notification delivery failures instead of classifying them as unresolved pages", async () => {
+  const calls: string[] = [];
+  const results: string[] = [];
+  const dependencies = makeDependencies(calls, {
+    recordResult: async (_url, result) => {
+      results.push(result);
+      throw new Error("Telegram delivery failed");
+    },
+  });
+  await assert.rejects(watchUrls({ urls: [URL], notificationTrigger: "new jobs" }, dependencies), /Telegram delivery failed/);
+  assert.deepEqual(results, ["success"]);
 });

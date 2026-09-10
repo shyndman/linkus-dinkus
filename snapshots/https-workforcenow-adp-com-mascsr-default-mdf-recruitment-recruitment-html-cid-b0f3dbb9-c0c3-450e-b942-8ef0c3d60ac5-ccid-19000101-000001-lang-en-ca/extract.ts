@@ -1,7 +1,6 @@
 import { readFileSync } from "node:fs";
 import * as cheerio from "cheerio";
 
-const EMPTY_OPENINGS_COUNT_TEXT = "Current Openings (0 of 0)";
 const EMPTY_RESULT_MARKDOWN = "# Job Openings\n\nWe currently have no open positions.\n";
 
 interface Job {
@@ -48,12 +47,14 @@ function main(): void {
   });
 
   if (jobs.length === 0) {
+    // The openings tile is part of the page shell on every load, so it gates
+    // a zero count: without it the ADP application never loaded.
     const openingsCountText = clean($("#tileCurrentOpenings").first().text());
-    if (openingsCountText !== EMPTY_OPENINGS_COUNT_TEXT) {
-      console.error("extract: no job listings or explicit empty-state marker found in snapshot");
+    if (openingsCountText.length === 0) {
+      console.error("extract: ADP openings tile (#tileCurrentOpenings) not found in snapshot");
       process.exit(1);
     }
-    process.stdout.write(EMPTY_RESULT_MARKDOWN);
+    process.stdout.write(`${JSON.stringify({ markdown: EMPTY_RESULT_MARKDOWN, jobCount: 0 })}\n`);
     return;
   }
 
@@ -65,7 +66,7 @@ function main(): void {
       return job.link ? `- ${job.title}${suffix}: ${job.link}` : `- ${job.title}${suffix}`;
     });
 
-  process.stdout.write(`# Job Openings\n\n${lines.join("\n")}\n`);
+  process.stdout.write(`${JSON.stringify({ markdown: `# Job Openings\n\n${lines.join("\n")}\n`, jobCount: jobs.length })}\n`);
 }
 
 try {

@@ -10,9 +10,10 @@ import { logger } from "../logger.ts";
 import { pathExists, PROJECT_ROOT } from "../runtime.ts";
 
 const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1_000;
-const SNAPSHOT_FILE_PATTERN = /^snapshot-(\d{8}T\d{6}Z)(?:\.draft)?\.(?:html|md)$/;
-const HTML_SNAPSHOT_PATTERN = /^snapshot-\d{8}T\d{6}Z\.html$/;
+const SNAPSHOT_FILE_PATTERN =
+  /^snapshot-(\d{8}T\d{6}Z)(?:\.draft)?\.(?:html|md|stats\.json|inspection\.json)$/;
 const HTML_OBJECT_PATTERN = /^[a-f0-9]{64}\.html$/;
+const HTML_SNAPSHOT_PATTERN = /^snapshot-\d{8}T\d{6}Z\.html$/;
 
 export const SNAPSHOT_ROOT = resolve(PROJECT_ROOT, "snapshots");
 
@@ -20,6 +21,26 @@ export type SnapshotCollectionResult = Readonly<{
   deletedSnapshots: number;
   deletedObjects: number;
 }>;
+
+/**
+ * The newest canonical Markdown in a page directory is the accepted baseline.
+ * It stays on disk (with its HTML and sidecars) even past retention so a
+ * long-unresolved incident cannot erase the comparison baseline.
+ */
+function latestAcceptedBasenames(entryNames: readonly string[]): ReadonlySet<string> {
+  const canonical = entryNames
+    .map((name) => SNAPSHOT_FILE_PATTERN.exec(name))
+    .filter((match): match is RegExpExecArray => match !== null && match[0]!.endsWith(".md") && !match[0]!.includes(".draft"));
+  if (canonical.length === 0) return new Set();
+  const newest = canonical.reduce((latest, match) => (match[1]! > latest[1]! ? match : latest));
+  const timestamp = newest[1]!;
+  return new Set([
+    `snapshot-${timestamp}.md`,
+    `snapshot-${timestamp}.html`,
+    `snapshot-${timestamp}.stats.json`,
+    `snapshot-${timestamp}.inspection.json`,
+  ]);
+}
 
 function timestampMs(timestamp: string): number {
   return Date.UTC(
@@ -37,9 +58,11 @@ async function collectPageSnapshots(
   cutoffMs: number,
 ): Promise<SnapshotCollectionResult> {
   let deletedSnapshots = 0;
-  for (const entry of await readdir(pageDirectory, { withFileTypes: true })) {
+  const entries = await readdir(pageDirectory, { withFileTypes: true });
+  const retained = latestAcceptedBasenames(entries.map(entry => entry.name));
+  for (const entry of entries) {
     const match = SNAPSHOT_FILE_PATTERN.exec(entry.name);
-    if (match?.[1] === undefined || timestampMs(match[1]) > cutoffMs) continue;
+    if (match?.[1] === undefined || timestampMs(match[1]) > cutoffMs || retained.has(entry.name)) continue;
 
     await unlink(join(pageDirectory, entry.name));
     deletedSnapshots += 1;
@@ -82,7 +105,8 @@ export async function collectExpiredSnapshots(
     deletedSnapshots += result.deletedSnapshots;
     deletedObjects += result.deletedObjects;
   }
-  logger.info("collected expired snapshot data.", {
+  const logCollection = deletedSnapshots === 0 && deletedObjects === 0 ? logger.debug : logger.info;
+  logCollection("collected expired snapshot data.", {
     retentionDays: APPLICATION_CONFIG.snapshots.retentionDays,
     deletedSnapshots,
     deletedObjects,

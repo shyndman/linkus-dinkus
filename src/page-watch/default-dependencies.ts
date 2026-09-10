@@ -1,4 +1,4 @@
-import { runChangeJudge, runExtractorAgent } from "../integrations/agents.ts";
+import { runChangeJudge, runExtractorAgent, runZeroJobInspection } from "../integrations/agents.ts";
 import { createPageChangeTelegramNotifier } from "../integrations/telegram.ts";
 import { capturePage } from "../snapshots/capture.ts";
 import {
@@ -9,7 +9,7 @@ import {
 import { collectExpiredSnapshots } from "../snapshots/collect.ts";
 import { compareSnapshots } from "../snapshots/compare.ts";
 import { discardSnapshotAttempt } from "../snapshots/discard-attempt.ts";
-import { extractSnapshot } from "../snapshots/extract.ts";
+import { extractSnapshot, readSnapshotJobCount, recordSnapshotInspection } from "../snapshots/extract.ts";
 import {
   CanonicalSnapshotPathSchema,
   HtmlSnapshotPathSchema,
@@ -24,13 +24,15 @@ export function createDefaultPageWatchDependencies(): PageWatchDependencies {
   return {
     pageState: {
       classify: getUrlState,
-      recordResult: async (url, result): Promise<void> => {
-        await recordUrlResult(url, result);
+      recordResult: async (url, result, detail): Promise<void> => {
+        await recordUrlResult(url, result, detail);
       },
     },
     snapshots: {
-      capture: async (url) => HtmlSnapshotPathSchema.parse(await capturePage(url)),
+      capture: async (url, renderSettleMs) => HtmlSnapshotPathSchema.parse(await capturePage(url, renderSettleMs)),
       extract: async (snapshot) => CanonicalSnapshotPathSchema.parse(await extractSnapshot(snapshot)),
+      jobCount: readSnapshotJobCount,
+      recordInspection: recordSnapshotInspection,
       compare: compareSnapshots,
       htmlChanged,
       incrementHtmlChangeCount,
@@ -48,6 +50,7 @@ export function createDefaultPageWatchDependencies(): PageWatchDependencies {
     },
     extractorAgent: { run: runExtractorAgent },
     changeJudge: { run: runChangeJudge },
+    zeroJobInspector: { run: runZeroJobInspection },
     notifier: {
       send: async (text: string): Promise<void> => {
         await createPageChangeTelegramNotifier()(text);

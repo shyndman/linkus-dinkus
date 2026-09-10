@@ -1,13 +1,12 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { APPLICATION_CONFIG } from "../config.ts";
-import { logger } from "../logger.ts";
+import { errorDetail, logger } from "../logger.ts";
 import { fail, getUrlSnapshotDirectory } from "../runtime.ts";
-import { createAdminTelegramNotifier } from "../integrations/telegram.ts";
+import { createAdminTelegramNotifier, type TelegramNotifier } from "../integrations/telegram.ts";
 
 export type UrlResult = "success" | "failure";
-type FailureState = Readonly<{ consecutiveFailures: number }>;
+type FailureState = Readonly<{ consecutiveFailures: number; alertSent: boolean; lastFailureReason: string | null }>;
 export type RecordResult = Readonly<{
   url: string;
   result: UrlResult;
@@ -29,30 +28,44 @@ async function readFailureState(path: string): Promise<FailureState> {
     ) {
       throw new Error(`Invalid failure state in ${path}`);
     }
-    const consecutiveFailures = value.consecutiveFailures as number;
-    logger.info("read the failure streak.", { consecutiveFailures });
-    return { consecutiveFailures };
+    const state = value as Record<string, unknown>;
+    const consecutiveFailures = state.consecutiveFailures as number;
+    const alertSent = state.alertSent === true;
+    const lastFailureReason = typeof state.lastFailureReason === "string" ? state.lastFailureReason : null;
+    logger.debug("read the failure streak.", { consecutiveFailures, alertSent });
+    return { consecutiveFailures, alertSent, lastFailureReason };
   } catch (error: unknown) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-      logger.info("no failure state exists yet. The failure streak starts at zero.");
-      return { consecutiveFailures: 0 };
+      logger.debug("no failure state exists yet. The failure streak starts at zero.");
+      return { consecutiveFailures: 0, alertSent: false, lastFailureReason: null };
     }
-    logger.error("could not read the failure state.", { path });
+    logger.error("could not read the failure state.", { path, error: errorDetail(error) });
     throw error;
   }
 }
 
 async function writeFailureState(path: string, state: FailureState): Promise<void> {
-  await writeFile(path, `${JSON.stringify(state)}\n`, "utf8");
+  try {
+    await writeFile(path, `${JSON.stringify(state)}\n`, "utf8");
+  } catch (error: unknown) {
+    logger.error("could not save the failure state.", { path, error: errorDetail(error) });
+    throw error;
+  }
 }
 
-export async function recordUrlResult(url: string, result: UrlResult): Promise<RecordResult> {
-  logger.info("recording the result of one watched page.");
-  const snapshotDirectory = await getUrlSnapshotDirectory(url);
+export async function recordUrlResult(
+  url: string,
+  result: UrlResult,
+  detail: string | null = null,
+  notify: TelegramNotifier | null = null,
+  resolveSnapshotDirectory: (url: string) => Promise<string> = getUrlSnapshotDirectory,
+): Promise<RecordResult> {
+  logger.debug("recording the result of one watched page.");
+  const snapshotDirectory = await resolveSnapshotDirectory(url);
   const statePath = join(snapshotDirectory, STATE_FILENAME);
   const previous = await readFailureState(statePath);
   const consecutiveFailures = result === "success" ? 0 : previous.consecutiveFailures + 1;
-  logger.info(
+  logger.debug(
     result === "success" ? "page succeeded." : "page failed.",
     {
       previousConsecutiveFailures: previous.consecutiveFailures,
@@ -60,29 +73,68 @@ export async function recordUrlResult(url: string, result: UrlResult): Promise<R
     },
   );
   let notified = false;
+  let alertSent = previous.alertSent;
+  const lastFailureReason = result === "failure" ? detail : null;
 
-  if (consecutiveFailures === APPLICATION_CONFIG.pageChecks.failureNotificationThreshold) {
-    logger.warn("failure streak reached the notification threshold.", {
-      consecutiveFailures,
-      notificationThreshold: APPLICATION_CONFIG.pageChecks.failureNotificationThreshold,
-    });
-    const notify = createAdminTelegramNotifier();
-    await notify(`Page watch failed for ${url} three times in a row.`);
-    notified = true;
+  try {
+    if (result === "failure") {
+      if (alertSent) {
+        logger.debug("an alert for the unresolved failure incident was already sent.", { url });
+      } else {
+        notified = await sendIncidentAlert(notify, url, detail);
+        alertSent = notified;
+      }
+    } else if (alertSent) {
+      notified = await sendRecoveryAlert(notify, url);
+      if (notified) alertSent = false;
+    }
+  } finally {
+    await mkdir(snapshotDirectory, { recursive: true });
+    await writeFailureState(statePath, { consecutiveFailures, alertSent, lastFailureReason });
+    if (result === "failure") {
+      logger.warn("saved the unresolved page incident.", { url, consecutiveFailures, alertSent });
+    } else if (previous.consecutiveFailures > 0) {
+      logger.info("the page recovered.", { url, previousConsecutiveFailures: previous.consecutiveFailures });
+    }
   }
-  if (
-    result === "failure"
-    && consecutiveFailures !== APPLICATION_CONFIG.pageChecks.failureNotificationThreshold
-  ) {
-    logger.info("failure streak does not trigger a notification.", {
-      consecutiveFailures,
-      notificationThreshold: APPLICATION_CONFIG.pageChecks.failureNotificationThreshold,
-    });
-  }
-
-  await mkdir(snapshotDirectory, { recursive: true });
-  await writeFailureState(statePath, { consecutiveFailures });
   return { url, result, consecutiveFailures, notified };
+}
+
+async function sendIncidentAlert(
+  notify: TelegramNotifier | null,
+  url: string,
+  detail: string | null,
+): Promise<boolean> {
+  const reason = detail === null || detail.trim().length === 0
+    ? "no failure detail was reported"
+    : detail;
+  try {
+    const send = notify ?? createAdminTelegramNotifier();
+    await send(`Page watch needs attention for ${url}: ${reason}`);
+    logger.info("sent the page incident alert.", { url });
+    return true;
+  } catch (error: unknown) {
+    logger.error("could not send the page watch failure alert. It will be retried on the next failure.", {
+      url,
+      error: errorDetail(error),
+    });
+    throw error;
+  }
+}
+
+async function sendRecoveryAlert(notify: TelegramNotifier | null, url: string): Promise<boolean> {
+  try {
+    const send = notify ?? createAdminTelegramNotifier();
+    await send(`Page watch recovery for ${url}: page checks work again.`);
+    logger.info("sent the page recovery alert.", { url });
+    return true;
+  } catch (error: unknown) {
+    logger.error("could not send the page watch recovery alert. It will be retried on the next success.", {
+      url,
+      error: errorDetail(error),
+    });
+    throw error;
+  }
 }
 
 async function main(): Promise<void> {

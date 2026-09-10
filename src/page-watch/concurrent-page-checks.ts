@@ -21,11 +21,14 @@ export type UrlCheckInput = Readonly<{
 }>;
 export type UrlCheckResult =
   | Readonly<{ state: "success"; result: UrlWatchResult }>
+  | Readonly<{ state: "unresolved"; error: string }>
   | Readonly<{ state: "failure"; error: string; recordError: string | null }>;
 export type UrlCheckRunner = (input: UrlCheckInput) => Promise<UrlCheckResult>;
 export type ConcurrentPageCheckResult = Readonly<{
   results: readonly UrlWatchResult[];
   failures: readonly string[];
+  unresolvedPageCount: number;
+  failedPageCount: number;
 }>;
 type ConcurrentPageCheckInput = Readonly<{
   notificationTrigger: string;
@@ -81,15 +84,20 @@ export async function runConcurrentPageChecks(
 
   const results: UrlWatchResult[] = [];
   const failures: string[] = [];
+  let unresolvedPageCount = 0;
+  let failedPageCount = 0;
   for (const [index, outcome] of outcomes.entries()) {
     const url = input.urls[index];
     if (url === undefined || outcome === undefined) throw new Error(`No page-check result exists at page index ${index}`);
     if (outcome.state === "success") {
       results.push(outcome.result);
+    } else if (outcome.state === "unresolved") {
+      unresolvedPageCount += 1;
     } else {
+      failedPageCount += 1;
       failures.push(`${url}: ${outcome.error}`);
       if (outcome.recordError !== null) failures.push(`${url}: could not record failure: ${outcome.recordError}`);
     }
   }
-  return { results, failures };
+  return { results, failures, unresolvedPageCount, failedPageCount };
 }
