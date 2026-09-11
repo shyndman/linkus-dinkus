@@ -21,7 +21,7 @@ import { watchUrls } from "./watch-urls.ts";
 
 const MCP_CONFIG_PATH = resolve(PROJECT_ROOT, ".omp", "mcp.json");
 const POLL_FREQUENCY_INPUT_PATH = resolve(PROJECT_ROOT, "snapshots", "poll-frequency-input.txt");
-const SYSTEMD_TIME_REFERENCE_PATH = resolve(PROJECT_ROOT, "resources", "systemd.time.md");
+const SYSTEMD_TIME_REFERENCE_PATH = resolve(PROJECT_ROOT, "src", "resources", "systemd.time.md");
 const DATE_FORMAT = "+%b %-d, %-I:%M %p";
 
 

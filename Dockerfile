@@ -88,7 +88,6 @@ COPY AGENTS.md tsconfig.json ./
 COPY .omp/mcp.container.json .omp/mcp.json
 COPY .omp/extensions/ .omp/extensions/
 COPY bin/ bin/
-COPY resources/ resources/
 COPY src/ src/
 
 RUN git clone https://github.com/shyndman/spreadsheet-mcp.git .tools/spreadsheet-mcp \

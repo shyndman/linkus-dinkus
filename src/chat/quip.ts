@@ -3,7 +3,7 @@ import { generateText } from "ai";
 import { createLanguageModel } from "../integrations/ai.ts";
 import { fail } from "../runtime.ts";
 
-const SYSTEM_PROMPT_URL = new URL("../../resources/quip-system-prompt.md", import.meta.url);
+const SYSTEM_PROMPT_URL = new URL("../resources/quip-system-prompt.md", import.meta.url);
 const USAGE = 'Usage: bin/quip "your message"';
 
 try {
