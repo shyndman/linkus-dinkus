@@ -1,0 +1,19 @@
+[Unit]
+Description=Save Telegram job bookmarks
+AssertPathIsMountPoint=/var/lib/linkus-dinkus
+AssertPathExists=/etc/linkus-dinkus/secrets/google-service-account.json
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/linkus-dinkus
+Environment=GOOGLE_SERVICE_ACCOUNT_FILE=/etc/linkus-dinkus/secrets/google-service-account.json
+Environment=XDG_CACHE_HOME=/usr/lib/linkus-dinkus/cache
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/opt/linkus-dinkus/bin/run-bookmark-bot
+Restart=on-failure
+RestartSec=10
+UMask=0077
+
+[Install]
+WantedBy=default.target

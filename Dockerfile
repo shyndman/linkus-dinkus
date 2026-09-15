@@ -104,13 +104,16 @@ RUN git clone https://github.com/shyndman/spreadsheet-mcp.git .tools/spreadsheet
 
 ENV HOME=/var/lib/linkus-dinkus
 
-COPY systemd/linkus-dinkus.service systemd/linkus-dinkus-failure.service systemd/linkus-dinkus-bootstrap.service /usr/lib/systemd/user/
+COPY systemd/linkus-dinkus.service systemd/linkus-dinkus-failure.service systemd/linkus-dinkus-bootstrap.service systemd/linkus-dinkus-bookmarks.service /usr/lib/systemd/user/
 COPY systemd/linkus-dinkus-user-environment.conf /etc/systemd/system/user@1000.service.d/linkus-dinkus-environment.conf
 
 RUN install --directory --mode=0755 /etc/systemd/user/default.target.wants \
     && ln --symbolic \
         /usr/lib/systemd/user/linkus-dinkus-bootstrap.service \
         /etc/systemd/user/default.target.wants/linkus-dinkus-bootstrap.service \
+    && ln --symbolic \
+        /usr/lib/systemd/user/linkus-dinkus-bookmarks.service \
+        /etc/systemd/user/default.target.wants/linkus-dinkus-bookmarks.service \
     && truncate --size=0 /etc/machine-id
 
 STOPSIGNAL SIGRTMIN+3

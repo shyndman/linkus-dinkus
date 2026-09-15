@@ -18,17 +18,23 @@ export type JournalFailureContext = Readonly<{
   retrievalError: string | null;
 }>;
 
-export function retrieveJournalFailureContext(): JournalFailureContext {
-  const metadata = {
-    unit: process.env.MONITOR_UNIT ?? "Linkus Dinkus",
-    invocationId: process.env.MONITOR_INVOCATION_ID ?? null,
-    serviceResult: process.env.MONITOR_SERVICE_RESULT ?? null,
-    exitCode: process.env.MONITOR_EXIT_CODE ?? null,
-    exitStatus: process.env.MONITOR_EXIT_STATUS ?? null,
-  };
+type JournalMetadata = Readonly<{
+  unit: string;
+  invocationId: string | null;
+  serviceResult: string | null;
+  exitCode: string | null;
+  exitStatus: string | null;
+}>;
+
+function retrieveJournalContext(
+  metadata: JournalMetadata,
+  invocationEnvironmentName: string,
+  journalDescription: string,
+  journalctl: typeof spawnSync = spawnSync,
+): JournalFailureContext {
   try {
-    if (metadata.invocationId === null) throw new Error("systemd did not supply MONITOR_INVOCATION_ID");
-    const result = spawnSync("journalctl", [
+    if (metadata.invocationId === null) throw new Error(`systemd did not supply ${invocationEnvironmentName}`);
+    const result = journalctl("journalctl", [
       "--user", "--quiet", "--no-pager", "--output=cat", `--lines=${JOURNAL_RECORD_LIMIT}`,
       `_SYSTEMD_INVOCATION_ID=${metadata.invocationId}`,
       "+", `USER_INVOCATION_ID=${metadata.invocationId}`,
@@ -40,9 +46,41 @@ export function retrieveJournalFailureContext(): JournalFailureContext {
     return { ...metadata, log, retrievalError: null };
   } catch (error: unknown) {
     const retrievalError = errorDetail(error);
-    logger.error("could not read the failed invocation journal.", { unit: metadata.unit, error: retrievalError });
+    logger.error(`could not read the ${journalDescription}.`, { unit: metadata.unit, error: retrievalError });
     return { ...metadata, log: "", retrievalError };
   }
+}
+
+export function retrieveJournalFailureContext(): JournalFailureContext {
+  return retrieveJournalContext({
+    unit: process.env.MONITOR_UNIT ?? "Linkus Dinkus",
+    invocationId: process.env.MONITOR_INVOCATION_ID ?? null,
+    serviceResult: process.env.MONITOR_SERVICE_RESULT ?? null,
+    exitCode: process.env.MONITOR_EXIT_CODE ?? null,
+    exitStatus: process.env.MONITOR_EXIT_STATUS ?? null,
+  }, "MONITOR_INVOCATION_ID", "failed invocation journal");
+}
+
+export function retrieveCurrentJournalContext(
+  environment: NodeJS.ProcessEnv = process.env,
+  journalctl: typeof spawnSync = spawnSync,
+): JournalFailureContext {
+  return retrieveJournalContext({
+    unit: environment.MONITOR_UNIT ?? "Linkus Dinkus",
+    invocationId: environment.INVOCATION_ID ?? null,
+    serviceResult: null,
+    exitCode: null,
+    exitStatus: null,
+  }, "INVOCATION_ID", "current invocation journal", journalctl);
+}
+
+function appendJournalDetails(
+  lines: string[],
+  context: JournalFailureContext,
+  detailsDescription = "failure details",
+): void {
+  if (context.retrievalError !== null) lines.push(`\nCould not read the ${detailsDescription}: ${context.retrievalError}`);
+  if (context.log.length > 0) lines.push(`\nJournal excerpt (up to ${JOURNAL_RECORD_LIMIT} records):\n${context.log}`);
 }
 
 export function buildFailureNotificationText(context: JournalFailureContext): string {
@@ -51,8 +89,19 @@ export function buildFailureNotificationText(context: JournalFailureContext): st
   if (context.exitCode !== null) lines.push(`Exit code: ${context.exitCode}`);
   if (context.exitStatus !== null) lines.push(`Exit status: ${context.exitStatus}`);
   if (context.invocationId !== null) lines.push(`Invocation: ${context.invocationId}`);
-  if (context.retrievalError !== null) lines.push(`\nCould not read the failure details: ${context.retrievalError}`);
-  if (context.log.length > 0) lines.push(`\nJournal excerpt (up to ${JOURNAL_RECORD_LIMIT} records):\n${context.log}`);
+  appendJournalDetails(lines, context);
+  return lines.join("\n");
+}
+
+export function buildPageIncidentNotificationText(
+  url: string,
+  consecutiveFailures: number,
+  detail: string | null,
+  context: JournalFailureContext,
+): string {
+  const reason = detail === null || detail.trim().length === 0 ? "no failure detail was reported" : detail;
+  const lines = [`Page watch needs attention for ${url}.`, `${consecutiveFailures} consecutive page checks failed.`, `Latest failure: ${reason}`];
+  appendJournalDetails(lines, context, "current run journal");
   return lines.join("\n");
 }
 

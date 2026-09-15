@@ -1,3 +1,7 @@
+import type { BookmarkStore } from "../bookmarks/store.ts";
+import type { JobIdentity } from "../page-watch/jobs.ts";
+import { LinkifyIt } from "linkify-it";
+
 import { Bot } from "./gramio-runtime.js";
 import { errorDetail, logger } from "../logger.ts";
 
@@ -14,9 +18,10 @@ type TelegramRecipient = Readonly<{
   chatId: string;
 }>;
 type TelegramMessageEntity = Readonly<{
-  type: "italic";
+  type: "bold" | "italic" | "text_link";
   offset: number;
   length: number;
+  url?: string;
 }>;
 type TelegramMessage = Readonly<{
   text: string;
@@ -29,6 +34,7 @@ type TelegramBotConstructor = new (token: string) => Readonly<{
       chat_id: string;
       text: string;
       entities: readonly TelegramMessageEntity[];
+      reply_markup?: Readonly<{ inline_keyboard: readonly (readonly Readonly<{ text: string; callback_data: string }>[])[] }>;
     }>): Promise<unknown>;
   }>;
 }>;
@@ -43,18 +49,44 @@ function requireTelegramEnvironment(name: TelegramEnvironmentName): string {
   logger.error("a required Telegram setting is missing.", { setting: name });
   throw new Error(`Missing required environment variable: ${name}`);
 }
+const linkify = new LinkifyIt();
+const COMPACT_LINK_LABEL = "link";
+
+function linkifyMessage(message: string): TelegramMessage {
+  const matches = linkify.match(message) ?? [];
+  let text = "";
+  let cursor = 0;
+  const entities: TelegramMessageEntity[] = [];
+  for (const match of matches) {
+    text += message.slice(cursor, match.index);
+    entities.push({
+      type: "text_link",
+      offset: text.length,
+      length: COMPACT_LINK_LABEL.length,
+      url: match.url,
+    });
+    text += COMPACT_LINK_LABEL;
+    cursor = match.lastIndex;
+  }
+  text += message.slice(cursor);
+  return { text, entities };
+}
 function formatPlainMessage(message: string): TelegramMessage {
-  return { text: message, entities: [] };
+  return linkifyMessage(message);
 }
 
 function formatPageChangeMessage(message: string): TelegramMessage {
+  const linked = linkifyMessage(message);
   return {
-    text: `${message}${PAGE_CHANGE_SIGNATURE_SEPARATOR}${PAGE_CHANGE_SIGNATURE}`,
-    entities: [{
-      type: "italic",
-      offset: message.length + PAGE_CHANGE_SIGNATURE_SEPARATOR.length,
-      length: PAGE_CHANGE_SIGNATURE.length,
-    }],
+    text: `${linked.text}${PAGE_CHANGE_SIGNATURE_SEPARATOR}${PAGE_CHANGE_SIGNATURE}`,
+    entities: [
+      ...linked.entities,
+      {
+        type: "italic",
+        offset: linked.text.length + PAGE_CHANGE_SIGNATURE_SEPARATOR.length,
+        length: PAGE_CHANGE_SIGNATURE.length,
+      },
+    ],
   };
 }
 
@@ -110,4 +142,49 @@ export function createPageChangeTelegramNotifier(
       chatId: requireTelegramEnvironment("TELEGRAM_PAGE_CHANGE_CHAT_ID"),
     },
   ], formatPageChangeMessage, BotClass);
+}
+
+export function createJobTelegramNotifier(
+  store: Pick<BookmarkStore, "register">,
+  BotClass: TelegramBotConstructor = Bot,
+): (job: JobIdentity) => Promise<void> {
+  const bot = new BotClass(requireTelegramEnvironment("TELEGRAM_BOT_TOKEN"));
+  const recipients = [...new Set([
+    requireTelegramEnvironment("TELEGRAM_CHAT_ID"),
+    requireTelegramEnvironment("TELEGRAM_PAGE_CHANGE_CHAT_ID"),
+  ])];
+  return async (job): Promise<void> => {
+    const token = await store.register(job);
+    const heading = `${job.organizationName}\n`;
+    const titleLine = `${job.title} (${COMPACT_LINK_LABEL})`;
+    const content = `${heading}${titleLine}`;
+    const message: TelegramMessage = {
+      text: `${content}${PAGE_CHANGE_SIGNATURE_SEPARATOR}${PAGE_CHANGE_SIGNATURE}`,
+      entities: [
+        { type: "bold", offset: 0, length: job.organizationName.length },
+        {
+          type: "text_link",
+          offset: heading.length + job.title.length + " (".length,
+          length: COMPACT_LINK_LABEL.length,
+          url: job.link,
+        },
+        {
+          type: "italic",
+          offset: content.length + PAGE_CHANGE_SIGNATURE_SEPARATOR.length,
+          length: PAGE_CHANGE_SIGNATURE.length,
+        },
+      ],
+    };
+    try {
+      await Promise.all(recipients.map(async (chatId) => bot.api.sendMessage({
+        chat_id: chatId,
+        ...message,
+        reply_markup: { inline_keyboard: [[{ text: "🔖 Bookmark", callback_data: `save:${token}` }]] },
+      })));
+      logger.info("sent the new job with a bookmark button.", { organization: job.organizationName, title: job.title });
+    } catch (error: unknown) {
+      logger.error("could not send the new job.", { title: job.title, error: errorDetail(error) });
+      throw error;
+    }
+  };
 }

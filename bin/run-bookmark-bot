@@ -1,0 +1,6 @@
+#!/usr/bin/env sh
+set -eu
+
+project_directory=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cd "$project_directory"
+exec node --import tsx "$project_directory/src/bookmarks/telegram.ts"

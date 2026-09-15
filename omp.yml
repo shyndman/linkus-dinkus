@@ -1,0 +1,4 @@
+memory:
+  backend: off
+modelRoles:
+  task: openrouter/deepseek/deepseek-v4.1-flash

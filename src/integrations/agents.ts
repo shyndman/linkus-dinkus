@@ -52,7 +52,7 @@ const EXTRACTOR_REASON_INSTRUCTIONS = {
 9. Create \`snapshots/<url-slug>/extract\` and its typed source file.
 10. Run \`bin/extract-snapshot <currentSnapshot>\`.
 11. Compare the canonical Markdown with every extraction expectation.
-12. Make sure stdout is JSON \`{ markdown, jobCount }\`. The jobCount must equal the actual extracted count.
+12. Make sure stdout is JSON \`{ markdown, jobCount, jobs }\`. The jobCount must equal jobs.length and the actual extracted count.
 13. Save the organization name at task.organizationNamePath.
 14. Finish only when the canonical Markdown contains all required data and the reported jobCount is correct.`,
   "scheduled-audit": `Complete this audit workflow:
@@ -61,7 +61,7 @@ const EXTRACTOR_REASON_INSTRUCTIONS = {
 3. Compare the output with the data in the HTML.
 4. Treat a zero extracted count as valid without any explicit empty statement.
 5. Treat an observed bot block, a missing job list, or an unloaded job-list structure as an extraction failure.
-6. Make sure stdout is JSON \`{ markdown, jobCount }\` with the actual extracted count.
+6. Make sure stdout is JSON \`{ markdown, jobCount, jobs }\` with every extracted job and its actual count.
 7. If the extractor is wrong, fix it and test it again.
 8. If the extractor is correct, do not change it.`,
   "organization-name": `Complete this organization-name workflow:
@@ -78,7 +78,14 @@ The fixed organization-name path is \`snapshots/<url-slug>/organization-name.txt
 The command contract is \`extract <snapshot.html>\`.
 The extractor must read one local HTML snapshot.
 The extractor must make no network requests.
-The extractor must write JSON \`{ markdown, jobCount }\` to standard output.
+The extractor must write JSON \`{ markdown, jobCount, jobs }\` to standard output.
+The jobs field must contain every extracted job as \`{ title, link }\`.
+Each title must be a nonempty job title, not a section heading.
+Each link must be an absolute HTTP or HTTPS direct job URL, or null when no direct URL is available.
+Resolve relative job URLs against the watched page URL. Inspect anchors, attributes, and embedded data for direct links.
+Do not substitute the jobs-page URL for a missing direct link. The application supplies that fallback.
+The jobCount must equal jobs.length. Empty pages must return jobs: [].
+Treat a listing without an identifiable title as an extraction failure.
 The extractor must put the canonical Markdown in the markdown field.
 The extractor must write failure details to standard error.
 The extractor must return a nonzero status after a failure.
@@ -111,19 +118,14 @@ The task supplies previous and current canonical Markdown paths and their differ
 Do not edit the extractor or a snapshot.
 1. Evaluate only the supplied Markdown difference against the notification trigger.
 2. If the difference does not match, submit a \`not-matched\` judgment.
-3. If the difference matches, identify each added job.
-4. For each added job without a direct link, inspect the current HTML snapshot.
-5. Examine its element, attributes, nearby anchors, embedded data, and event metadata for a URL.
-6. Resolve a relative URL against the watched page URL.
-7. Submit a \`matched\` judgment with the change text that the notification trigger requests.
-8. Include each added job name and each recovered direct link.
-9. If URL recovery fails, submit the judgment without a link.
-10. If a system problem prevents a valid judgment, submit a \`failure\` judgment with the problem.
+3. If the difference matches, submit a \`matched\` judgment with a short description of the change.
+4. If a system problem prevents a valid judgment, submit a \`failure\` judgment with the problem.
+The application identifies added jobs from structured extractor output and sends each job separately.
+Do not recover job links or decide whether to remove bookmarks. Procedural code manages saved jobs.
 Call \`submit-judgment\` exactly once.
 The workflow sends one incident alert for a failed judgment and retains the previous accepted snapshot.
-The workflow places matched text under the saved organization-name heading.
+For changes without added jobs, the workflow places matched text under the saved organization-name heading.
 Do not repeat the organization name in the matched text.
-Use URL recovery only for judgment text.
 Do not change the canonical Markdown.`;
 
 const ZERO_JOB_INSPECTION_INSTRUCTIONS = `You are the zero-job inspector. Do only this role.
@@ -168,6 +170,8 @@ async function runOmpAgent(
       "--print",
       "--mode=text",
       "--no-session",
+      "--config",
+      "./omp.yml",
       prompt,
     ], {
       cwd: PROJECT_ROOT,

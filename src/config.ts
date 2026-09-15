@@ -1,6 +1,6 @@
 export type ApplicationConfig = Readonly<{
   agents: Readonly<{
-    model: "openrouter/z-ai/glm-5.3-flash";
+    model: "openrouter/deepseek/deepseek-v4.1-flash";
     extractorMaxTimeSeconds: string;
     judgeMaxTimeSeconds: string;
     scheduleMaxTimeSeconds: string;
@@ -31,7 +31,7 @@ export type ApplicationConfig = Readonly<{
 
 export const APPLICATION_CONFIG = {
   agents: {
-    model: "openrouter/z-ai/glm-5.3-flash",
+    model: "openrouter/deepseek/deepseek-v4.1-flash",
     extractorMaxTimeSeconds: "900",
     judgeMaxTimeSeconds: "900",
     scheduleMaxTimeSeconds: "60",
@@ -51,7 +51,7 @@ export const APPLICATION_CONFIG = {
   },
   snapshots: {
     retentionDays: 7,
-    renderSettleMs: 6_000,
+    renderSettleMs: 10_000,
     retryRenderSettleMs: 25_000,
   },
   systemd: {
