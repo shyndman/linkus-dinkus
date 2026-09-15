@@ -3,16 +3,25 @@ import { basename, dirname, extname, join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
 import { errorDetail, logger } from "../logger.ts";
+import { ExtractedJobSchema, type ExtractedJob } from "../page-watch/jobs.ts";
 import { JudgmentResultSchema, type JudgmentResult } from "../page-watch/judgment.ts";
 import { PROJECT_ROOT, fail, pathExists, runTool } from "../runtime.ts";
 
-const EXTRACTOR_OUTPUT_SCHEMA = z.strictObject({
-  markdown: z.string(),
-  jobCount: z.number().int().nonnegative(),
+const JobCountSchema = z.number().int().nonnegative();
+const SNAPSHOT_STATISTICS_SCHEMA = z.strictObject({
+  jobCount: JobCountSchema,
+  jobs: z.array(ExtractedJobSchema),
+}).refine(({ jobCount, jobs }) => jobCount === jobs.length, {
+  message: "jobCount must equal the number of extracted jobs.",
+  path: ["jobCount"],
 });
-const SNAPSHOT_STATISTICS_SCHEMA = EXTRACTOR_OUTPUT_SCHEMA.pick({ jobCount: true });
+const EXTRACTOR_OUTPUT_SCHEMA = SNAPSHOT_STATISTICS_SCHEMA.safeExtend({ markdown: z.string() });
+const LEGACY_SNAPSHOT_STATISTICS_SCHEMA = z.strictObject({ jobCount: JobCountSchema });
 
 type ExtractorOutput = Readonly<z.infer<typeof EXTRACTOR_OUTPUT_SCHEMA>>;
+type SnapshotStatistics = Readonly<z.infer<typeof SNAPSHOT_STATISTICS_SCHEMA>>;
+type LegacySnapshotStatistics = Readonly<z.infer<typeof LEGACY_SNAPSHOT_STATISTICS_SCHEMA>>;
+type StoredSnapshotStatistics = SnapshotStatistics | LegacySnapshotStatistics;
 
 const STATISTICS_SUFFIX = ".stats.json";
 const INSPECTION_SUFFIX = ".inspection.json";
@@ -45,7 +54,7 @@ function siblingPath(snapshotPath: string, suffix: string): string {
   return snapshotPath.slice(0, -extension.length) + suffix;
 }
 
-async function readJobCountFromStatistics(path: string): Promise<number | null> {
+async function readSnapshotStatistics(path: string): Promise<StoredSnapshotStatistics | null> {
   let content: string;
   try {
     content = await readFile(path, "utf8");
@@ -56,29 +65,33 @@ async function readJobCountFromStatistics(path: string): Promise<number | null> 
   }
   let parsed: unknown;
   try {
-    parsed = JSON.parse(content);
+    parsed = JSON.parse(content) as unknown;
   } catch (error: unknown) {
     logger.error("snapshot statistics contain invalid JSON.", { path, error: errorDetail(error) });
     throw new Error(`Invalid snapshot statistics in ${path}: ${errorDetail(error)}`, { cause: error });
   }
-  const result = SNAPSHOT_STATISTICS_SCHEMA.safeParse(parsed);
-  if (!result.success) {
-    logger.error("the snapshot statistics are invalid.", { path, error: result.error.message });
-    throw new Error(`invalid snapshot statistics sidecar: ${path}`);
-  }
-  return result.data.jobCount;
+  const current = SNAPSHOT_STATISTICS_SCHEMA.safeParse(parsed);
+  if (current.success) return current.data;
+  const legacy = LEGACY_SNAPSHOT_STATISTICS_SCHEMA.safeParse(parsed);
+  if (legacy.success) return legacy.data;
+  logger.error("the snapshot statistics are invalid.", { path, error: current.error.message });
+  throw new Error(`invalid snapshot statistics sidecar: ${path}`);
 }
 
-async function extractJobCountFromHtml(htmlPath: string): Promise<number> {
+async function extractJobsFromHtml(htmlPath: string): Promise<SnapshotStatistics> {
   if (!(await pathExists(htmlPath))) throw new Error(`Snapshot does not exist: ${htmlPath}`);
   const extractorPath = join(dirname(htmlPath), "extract");
   if (!(await pathExists(extractorPath))) throw new Error(`Extractor does not exist: ${extractorPath}`);
   const output = await runExtractor(extractorPath, htmlPath);
-  logger.info("derived the job count from a legacy snapshot with the current extractor.", {
+  logger.info("derived the job inventory from a legacy snapshot with the current extractor.", {
     snapshot: basename(htmlPath),
     jobCount: output.jobCount,
   });
-  return output.jobCount;
+  return { jobCount: output.jobCount, jobs: output.jobs };
+}
+
+async function writeSnapshotStatistics(path: string, statistics: SnapshotStatistics): Promise<void> {
+  await writeFile(path, `${JSON.stringify(statistics)}\n`, "utf8");
 }
 
 export async function extractSnapshot(snapshotPath: string): Promise<string> {
@@ -90,7 +103,7 @@ export async function extractSnapshot(snapshotPath: string): Promise<string> {
   if (!(await pathExists(extractorPath))) throw new Error(`Extractor does not exist: ${extractorPath}`);
   logger.debug("running the saved extractor.", { extractorPath, snapshot: basename(snapshotPath) });
 
-  const { markdown, jobCount } = await runExtractor(extractorPath, snapshotPath);
+  const { markdown, jobCount, jobs } = await runExtractor(extractorPath, snapshotPath);
   logger.debug("extractor returned canonical Markdown.", {
     bytes: Buffer.byteLength(markdown),
     jobCount,
@@ -99,9 +112,9 @@ export async function extractSnapshot(snapshotPath: string): Promise<string> {
   const statisticsPath = siblingPath(snapshotPath, STATISTICS_SUFFIX);
   await Promise.all([
     writeFile(outputPath, markdown, "utf8"),
-    writeFile(statisticsPath, `${JSON.stringify({ jobCount })}\n`, "utf8"),
+    writeSnapshotStatistics(statisticsPath, { jobCount, jobs }),
   ]);
-  logger.info("saved the canonical Markdown and the job-count sidecar.", {
+  logger.info("saved the canonical Markdown and the job inventory.", {
     snapshot: basename(outputPath),
     bytes: Buffer.byteLength(markdown),
     jobCount,
@@ -110,17 +123,26 @@ export async function extractSnapshot(snapshotPath: string): Promise<string> {
   return relative(PROJECT_ROOT, outputPath);
 }
 
-// Historical snapshots do not have counts. Derive each count once without changing the saved Markdown.
-export async function readSnapshotJobCount(canonicalPath: string): Promise<number> {
+// Derive historical inventories once without changing the saved Markdown.
+async function readInventory(canonicalPath: string): Promise<SnapshotStatistics> {
   if (extname(canonicalPath) !== MARKDOWN_SUFFIX) {
     throw new Error(`Snapshot must be a Markdown file: ${canonicalPath}`);
   }
   const statisticsPath = siblingPath(canonicalPath, STATISTICS_SUFFIX);
-  const storedCount = await readJobCountFromStatistics(statisticsPath);
-  if (storedCount !== null) return storedCount;
-  const jobCount = await extractJobCountFromHtml(siblingPath(canonicalPath, HTML_SUFFIX));
-  await writeFile(statisticsPath, `${JSON.stringify({ jobCount })}\n`, "utf8");
-  return jobCount;
+  const stored = await readSnapshotStatistics(statisticsPath);
+  if (stored !== null && "jobs" in stored) return stored;
+  const inventory = await extractJobsFromHtml(siblingPath(canonicalPath, HTML_SUFFIX));
+  await writeSnapshotStatistics(statisticsPath, inventory);
+  return inventory;
+}
+
+export async function readSnapshotJobCount(canonicalPath: string): Promise<number> {
+  const statistics = await readSnapshotStatistics(siblingPath(canonicalPath, STATISTICS_SUFFIX));
+  return statistics?.jobCount ?? (await readInventory(canonicalPath)).jobCount;
+}
+
+export async function readSnapshotJobs(canonicalPath: string): Promise<readonly ExtractedJob[]> {
+  return (await readInventory(canonicalPath)).jobs;
 }
 
 /** Persists a zero-job inspection judgment beside the canonical snapshot. */

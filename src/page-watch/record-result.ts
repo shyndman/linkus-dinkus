@@ -4,6 +4,12 @@ import { pathToFileURL } from "node:url";
 import { errorDetail, logger } from "../logger.ts";
 import { fail, getUrlSnapshotDirectory } from "../runtime.ts";
 import { createAdminTelegramNotifier, type TelegramNotifier } from "../integrations/telegram.ts";
+import {
+  buildPageIncidentNotificationText,
+  retrieveCurrentJournalContext,
+  splitFailureNotification,
+  type JournalFailureContext,
+} from "../systemd/journal.ts";
 
 export type UrlResult = "success" | "failure";
 type FailureState = Readonly<{ consecutiveFailures: number; alertSent: boolean; lastFailureReason: string | null }>;
@@ -15,6 +21,8 @@ export type RecordResult = Readonly<{
 }>;
 
 const STATE_FILENAME = "failure-state.json";
+const FAILURE_ALERT_THRESHOLD = 6;
+type JournalContextRetriever = () => JournalFailureContext;
 
 async function readFailureState(path: string): Promise<FailureState> {
   try {
@@ -59,6 +67,7 @@ export async function recordUrlResult(
   detail: string | null = null,
   notify: TelegramNotifier | null = null,
   resolveSnapshotDirectory: (url: string) => Promise<string> = getUrlSnapshotDirectory,
+  retrieveJournalContext: JournalContextRetriever = retrieveCurrentJournalContext,
 ): Promise<RecordResult> {
   logger.debug("recording the result of one watched page.");
   const snapshotDirectory = await resolveSnapshotDirectory(url);
@@ -73,20 +82,23 @@ export async function recordUrlResult(
     },
   );
   let notified = false;
-  let alertSent = previous.alertSent;
+  let alertSent = result === "success" ? false : previous.alertSent;
   const lastFailureReason = result === "failure" ? detail : null;
 
   try {
-    if (result === "failure") {
-      if (alertSent) {
-        logger.debug("an alert for the unresolved failure incident was already sent.", { url });
-      } else {
-        notified = await sendIncidentAlert(notify, url, detail);
-        alertSent = notified;
-      }
-    } else if (alertSent) {
-      notified = await sendRecoveryAlert(notify, url);
-      if (notified) alertSent = false;
+    if (
+      result === "failure"
+      && consecutiveFailures >= FAILURE_ALERT_THRESHOLD
+      && !alertSent
+    ) {
+      notified = await sendIncidentAlert(
+        notify,
+        url,
+        consecutiveFailures,
+        detail,
+        retrieveJournalContext,
+      );
+      alertSent = notified;
     }
   } finally {
     await mkdir(snapshotDirectory, { recursive: true });
@@ -103,33 +115,19 @@ export async function recordUrlResult(
 async function sendIncidentAlert(
   notify: TelegramNotifier | null,
   url: string,
+  consecutiveFailures: number,
   detail: string | null,
+  retrieveJournalContext: JournalContextRetriever,
 ): Promise<boolean> {
-  const reason = detail === null || detail.trim().length === 0
-    ? "no failure detail was reported"
-    : detail;
   try {
     const send = notify ?? createAdminTelegramNotifier();
-    await send(`Page watch needs attention for ${url}: ${reason}`);
-    logger.info("sent the page incident alert.", { url });
+    const context = retrieveJournalContext();
+    const text = buildPageIncidentNotificationText(url, consecutiveFailures, detail, context);
+    for (const message of splitFailureNotification(text)) await send(message);
+    logger.info("sent the page incident alert.", { url, consecutiveFailures });
     return true;
   } catch (error: unknown) {
     logger.error("could not send the page watch failure alert. It will be retried on the next failure.", {
-      url,
-      error: errorDetail(error),
-    });
-    throw error;
-  }
-}
-
-async function sendRecoveryAlert(notify: TelegramNotifier | null, url: string): Promise<boolean> {
-  try {
-    const send = notify ?? createAdminTelegramNotifier();
-    await send(`Page watch recovery for ${url}: page checks work again.`);
-    logger.info("sent the page recovery alert.", { url });
-    return true;
-  } catch (error: unknown) {
-    logger.error("could not send the page watch recovery alert. It will be retried on the next success.", {
       url,
       error: errorDetail(error),
     });

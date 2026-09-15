@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import test from "node:test";
+import { z } from "zod";
+import { ExtractedJobSchema } from "../src/page-watch/jobs.ts";
 
 type ExtractorCase = Readonly<{
   name: string;
@@ -12,6 +14,7 @@ type ExtractorCase = Readonly<{
   validEmptyHtml: string;
   missingStructureHtml: string;
   expectedJobTitle: string;
+  expectedLink: string | null;
 }>;
 
 const EXTRACTOR_CASES: readonly ExtractorCase[] = [
@@ -24,6 +27,7 @@ const EXTRACTOR_CASES: readonly ExtractorCase[] = [
     validEmptyHtml: '<html><body><ul data-ui="list"></ul></body></html>',
     missingStructureHtml: "<html><body><main>careers</main></body></html>",
     expectedJobTitle: "Restoration Lead",
+    expectedLink: "https://apply.workable.com/veritree/j/1/",
   },
   {
     name: "BambooHR",
@@ -35,6 +39,7 @@ const EXTRACTOR_CASES: readonly ExtractorCase[] = [
     validEmptyHtml: '<html><body><div class="BambooHR-ATS-board"></div></body></html>',
     missingStructureHtml: "<html><body><main>careers</main></body></html>",
     expectedJobTitle: "Field Technician",
+    expectedLink: "https://bcinvasives.ca/jobs/field-technician",
   },
   {
     name: "ADP",
@@ -47,6 +52,7 @@ const EXTRACTOR_CASES: readonly ExtractorCase[] = [
     validEmptyHtml: '<html><body><h1 id="tileCurrentOpenings">Current Openings (0 of 0)</h1></body></html>',
     missingStructureHtml: "<html><body><main>Recruitment</main></body></html>",
     expectedJobTitle: "Payroll Specialist",
+    expectedLink: null,
   },
   {
     name: "CPAWS",
@@ -58,6 +64,7 @@ const EXTRACTOR_CASES: readonly ExtractorCase[] = [
       '<html><body><div class="acf-innerblocks-container"><p>Current Career Opportunities</p></div></body></html>',
     missingStructureHtml: "<html><body><main>about us</main></body></html>",
     expectedJobTitle: "Marine Coordinator",
+    expectedLink: "https://cpawsbc.org/jobs/marine-coordinator",
   },
 ];
 
@@ -75,23 +82,11 @@ function runExtractor(extractorPath: string, html: string): SpawnSyncReturns<str
   }
 }
 
-function parseExtraction(stdout: string, detail: string): { markdown: string; jobCount: number } {
-  const parsed: unknown = JSON.parse(stdout);
-  assert.deepEqual(
-    Object.keys(parsed as object).sort(),
-    ["jobCount", "markdown"],
-    `${detail}: unexpected extraction result keys`,
-  );
-  const result = parsed as { markdown: string; jobCount: number };
-  assert.equal(typeof result.markdown, "string", `${detail}: markdown must be a string`);
-  assert.equal(
-    typeof result.jobCount,
-    "number",
-    `${detail}: jobCount must be a number`,
-  );
-  assert.ok(Number.isInteger(result.jobCount) && result.jobCount >= 0, `${detail}: jobCount must be a nonnegative integer`);
-  return result;
-}
+const ExtractionSchema = z.strictObject({
+  markdown: z.string(),
+  jobCount: z.number().int().nonnegative(),
+  jobs: z.array(ExtractedJobSchema),
+});
 
 for (const extractorCase of EXTRACTOR_CASES) {
   const skip = !existsSync(extractorCase.path);
@@ -99,17 +94,19 @@ for (const extractorCase of EXTRACTOR_CASES) {
     const result = runExtractor(extractorCase.path, extractorCase.withJobsHtml);
 
     assert.equal(result.status, 0, result.stderr);
-    const extraction = parseExtraction(result.stdout, extractorCase.name);
+    const extraction = ExtractionSchema.parse(JSON.parse(result.stdout));
     assert.equal(extraction.jobCount, 1);
     assert.match(extraction.markdown, new RegExp(extractorCase.expectedJobTitle));
+    assert.deepEqual(extraction.jobs, [{ title: extractorCase.expectedJobTitle, link: extractorCase.expectedLink }]);
   });
 
   test(`${extractorCase.name} extractor accepts a valid empty capture without site wording`, { skip }, (): void => {
     const result = runExtractor(extractorCase.path, extractorCase.validEmptyHtml);
 
     assert.equal(result.status, 0, result.stderr);
-    const extraction = parseExtraction(result.stdout, extractorCase.name);
+    const extraction = ExtractionSchema.parse(JSON.parse(result.stdout));
     assert.equal(extraction.jobCount, 0);
+    assert.deepEqual(extraction.jobs, []);
   });
 
   test(`${extractorCase.name} extractor rejects a snapshot with the job structure missing`, { skip }, (): void => {

@@ -126,7 +126,7 @@ test("derives and saves a legacy zero count without replacing accepted Markdown"
     const markdown = html.replace(".html", ".md");
     const extractor = join(page, "extract");
     writeFileSync(markdown, "Previously accepted Markdown\n");
-    writeFileSync(extractor, "#!/bin/sh\nprintf '%s\\n' '{\"markdown\":\"different output\",\"jobCount\":0}'\n", { mode: 0o755 });
+    writeFileSync(extractor, "#!/bin/sh\nprintf '%s\\n' '{\"markdown\":\"different output\",\"jobCount\":0,\"jobs\":[]}'\n", { mode: 0o755 });
     assert.equal(await readSnapshotJobCount(markdown), 0);
     rmSync(extractor);
     assert.equal(await readSnapshotJobCount(markdown), 0);

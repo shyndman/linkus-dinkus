@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
+import type { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -9,9 +10,22 @@ import {
   type RecordResult,
   type UrlResult,
 } from "../src/page-watch/record-result.ts";
+import {
+  retrieveCurrentJournalContext,
+  type JournalFailureContext,
+} from "../src/systemd/journal.ts";
 
 const TEST_URL_PREFIX = "https://record-result.test/incident-";
 const STATE_FILENAME = "failure-state.json";
+const JOURNAL_CONTEXT: JournalFailureContext = {
+  unit: "linkus-dinkus.service",
+  invocationId: "current-run",
+  serviceResult: null,
+  exitCode: null,
+  exitStatus: null,
+  log: "latest current-run journal entry",
+  retrievalError: null,
+};
 
 type Notifier = (message: string) => Promise<void>;
 type StateSnapshot = Readonly<{
@@ -27,22 +41,22 @@ type Harness = Readonly<{
     notify: Notifier | null,
   ) => Promise<RecordResult>;
   readState: () => Promise<StateSnapshot>;
-  writeState: (state: object) => Promise<void>;
 }>;
 
-function collectingNotifier(
-  sent: string[],
-  failure: Error | null = null,
-): Notifier {
+function collectingNotifier(sent: string[], failure: Error | null = null): Notifier {
   return async (message: string): Promise<void> => {
     if (failure !== null) throw failure;
     sent.push(message);
   };
 }
 
-async function withSnapshotDirectory(
-  run: (harness: Harness) => Promise<void>,
-): Promise<void> {
+function firstMessage(sent: readonly string[]): string {
+  const message = sent.at(0);
+  assert.ok(message);
+  return message;
+}
+
+async function withSnapshotDirectory(run: (harness: Harness) => Promise<void>): Promise<void> {
   const root = await mkdtemp(join(tmpdir(), "record-result-test-"));
   try {
     const url = `${TEST_URL_PREFIX}${randomUUID()}`;
@@ -52,139 +66,92 @@ async function withSnapshotDirectory(
       detail: string | null,
       notify: Notifier | null,
     ): Promise<RecordResult> =>
-      recordUrlResult(url, result, detail, notify, async (): Promise<string> => directory);
+      recordUrlResult(
+        url,
+        result,
+        detail,
+        notify,
+        async (): Promise<string> => directory,
+        (): JournalFailureContext => JOURNAL_CONTEXT,
+      );
     const readState = async (): Promise<StateSnapshot> =>
       JSON.parse(await readFile(join(directory, STATE_FILENAME), "utf8"));
-    const writeState = async (state: object): Promise<void> => {
-      await mkdir(directory, { recursive: true });
-      await writeFile(join(directory, STATE_FILENAME), `${JSON.stringify(state)}\n`, "utf8");
-    };
-    await run({ url, record, readState, writeState });
+    await run({ url, record, readState });
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 }
 
-test("alerts on the first failure, suppresses repeats, recovers once", async (): Promise<void> => {
+test("alerts after six failed checks, suppresses repeats, and resets silently", async (): Promise<void> => {
   await withSnapshotDirectory(async ({ url, record, readState }): Promise<void> => {
     const sent: string[] = [];
     const notify = collectingNotifier(sent);
 
-    const first = await record("failure", "HTTP 500 from origin", notify);
-    assert.equal(sent.length, 1);
-    assert.ok(sent[0]!.includes(url));
-    assert.ok(sent[0]!.includes("HTTP 500 from origin"));
-    assert.equal(first.notified, true);
-    assert.equal(first.consecutiveFailures, 1);
-    assert.deepEqual(await readState(), {
-      consecutiveFailures: 1,
-      alertSent: true,
-      lastFailureReason: "HTTP 500 from origin",
-    });
+    for (let failures = 1; failures < 6; failures += 1) {
+      const result = await record("failure", `HTTP 50${failures}`, notify);
+      assert.equal(result.consecutiveFailures, failures);
+      assert.equal(result.notified, false);
+    }
+    assert.deepEqual(sent, []);
 
-    const repeat = await record("failure", "HTTP 503 from origin", notify);
+    const threshold = await record("failure", "HTTP 500 from origin", notify);
+    assert.equal(threshold.consecutiveFailures, 6);
+    assert.equal(threshold.notified, true);
     assert.equal(sent.length, 1);
-    assert.equal(repeat.notified, false);
-    assert.equal(repeat.consecutiveFailures, 2);
-    assert.equal((await readState()).lastFailureReason, "HTTP 503 from origin");
+    const thresholdMessage = firstMessage(sent);
+    assert.ok(thresholdMessage.includes(url));
+    assert.match(thresholdMessage, /6 consecutive page checks failed/);
+    assert.match(thresholdMessage, /latest current-run journal entry/);
 
-    const recovery = await record("success", null, notify);
-    assert.equal(sent.length, 2);
-    assert.ok(sent[1]!.includes(url));
-    assert.match(sent[1]!, /recovery/);
-    assert.equal(recovery.notified, true);
-    assert.equal(recovery.consecutiveFailures, 0);
+    await record("failure", "HTTP 503 from origin", notify);
+    assert.equal(sent.length, 1);
+    await record("success", null, notify);
+    assert.equal(sent.length, 1);
     assert.deepEqual(await readState(), {
       consecutiveFailures: 0,
       alertSent: false,
       lastFailureReason: null,
     });
 
-    const repeatedSuccess = await record("success", null, notify);
+    for (let failures = 1; failures <= 6; failures += 1) {
+      await record("failure", "second incident", notify);
+    }
     assert.equal(sent.length, 2);
-    assert.equal(repeatedSuccess.notified, false);
   });
 });
 
-test("alerts when the CLI omits the detail and includes a fallback reason", async (): Promise<void> => {
+test("persists an unsent threshold alert and retries it on the next failed check", async (): Promise<void> => {
   await withSnapshotDirectory(async ({ url, record, readState }): Promise<void> => {
     const sent: string[] = [];
-    await record("failure", null, collectingNotifier(sent));
-    assert.equal(sent.length, 1);
-    assert.ok(sent[0]!.includes(url));
-    assert.match(sent[0]!, /no failure detail/);
-    assert.equal((await readState()).lastFailureReason, null);
-  });
-});
+    const notify = collectingNotifier(sent);
+    for (let failures = 1; failures < 6; failures += 1) {
+      await record("failure", "HTTP 500", notify);
+    }
 
-test("treats a legacy state without an alert field as no prior alert", async (): Promise<void> => {
-  await withSnapshotDirectory(async ({ url, record, readState, writeState }): Promise<void> => {
-    const sent: string[] = [];
-
-    await record("failure", "first incident", collectingNotifier(sent));
-    await writeState({ consecutiveFailures: 3 });
-
-    await record("failure", "legacy state", collectingNotifier(sent));
-    assert.equal(sent.length, 2);
-    assert.ok(sent[1]!.includes(url));
-    assert.ok(sent[1]!.includes("legacy state"));
+    await assert.rejects(record("failure", "telegram outage", collectingNotifier(sent, new Error("telegram down"))), /telegram down/);
     assert.deepEqual(await readState(), {
-      consecutiveFailures: 4,
-      alertSent: true,
-      lastFailureReason: "legacy state",
-    });
-  });
-});
-
-test("does not mark the alert delivered when sending fails and retries later", async (): Promise<void> => {
-  await withSnapshotDirectory(async ({ url, record, readState }): Promise<void> => {
-    const sent: string[] = [];
-    const failing = collectingNotifier(sent, new Error("telegram down"));
-
-    await assert.rejects(record("failure", "HTTP 500", failing), /telegram down/);
-    assert.equal(sent.length, 0);
-    assert.deepEqual(await readState(), {
-      consecutiveFailures: 1,
+      consecutiveFailures: 6,
       alertSent: false,
-      lastFailureReason: "HTTP 500",
+      lastFailureReason: "telegram outage",
     });
 
-    await record("failure", "HTTP 500 again", collectingNotifier(sent));
+    await record("failure", "retry failure", notify);
     assert.equal(sent.length, 1);
-    assert.ok(sent[0]!.includes(url));
-    assert.ok(sent[0]!.includes("HTTP 500 again"));
+    const retryMessage = firstMessage(sent);
+    assert.ok(retryMessage.includes(url));
+    assert.match(retryMessage, /retry failure/);
     assert.equal((await readState()).alertSent, true);
-
-    await assert.rejects(record("success", null, failing), /telegram down/);
-    assert.equal((await readState()).alertSent, true);
-
-    await record("success", null, collectingNotifier(sent));
-    assert.equal(sent.length, 2);
-    assert.match(sent[1]!, /recovery/);
-    assert.equal((await readState()).alertSent, false);
   });
 });
 
-test("does not alert again on successes when no incident was alerted", async (): Promise<void> => {
-  await withSnapshotDirectory(async ({ record, readState }): Promise<void> => {
-    const sent: string[] = [];
-    await record("success", null, collectingNotifier(sent));
-    assert.deepEqual(sent, []);
-    assert.equal((await readState()).alertSent, false);
-  });
-});
-
-test("recording succeeds without Telegram configuration when nothing is sent", async (): Promise<void> => {
+test("does not require Telegram configuration before the threshold", async (): Promise<void> => {
   await withSnapshotDirectory(async ({ record, readState }): Promise<void> => {
     const environmentNames = ["TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"] as const;
     const previous = environmentNames.map((name): string | undefined => process.env[name]);
     try {
       for (const name of environmentNames) delete process.env[name];
-
-      const success = await record("success", null, null);
-      assert.equal(success.notified, false);
-
-      await assert.rejects(record("failure", "HTTP 500", null), /Missing required environment variable: TELEGRAM_/);
+      await record("success", null, null);
+      await record("failure", "HTTP 500", null);
       assert.deepEqual(await readState(), {
         consecutiveFailures: 1,
         alertSent: false,
@@ -198,4 +165,21 @@ test("recording succeeds without Telegram configuration when nothing is sent", a
       });
     }
   });
+});
+
+test("uses the current service invocation rather than OnFailure metadata for the journal", (): void => {
+  const invocations: string[] = [];
+  const journalctl = ((_: string, arguments_: readonly string[]) => {
+    invocations.push(arguments_.join("\n"));
+    return { error: undefined, status: 0, stderr: "", stdout: "current run journal" };
+  }) as unknown as typeof spawnSync;
+
+  const context = retrieveCurrentJournalContext({
+    INVOCATION_ID: "current-invocation",
+    MONITOR_INVOCATION_ID: "completed-invocation",
+  }, journalctl);
+
+  assert.equal(context.invocationId, "current-invocation");
+  assert.match(invocations[0]!, /_SYSTEMD_INVOCATION_ID=current-invocation/);
+  assert.doesNotMatch(invocations[0]!, /completed-invocation/);
 });

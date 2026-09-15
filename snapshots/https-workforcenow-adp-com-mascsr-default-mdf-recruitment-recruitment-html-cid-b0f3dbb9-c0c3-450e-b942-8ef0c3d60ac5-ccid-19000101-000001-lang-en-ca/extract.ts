@@ -6,7 +6,7 @@ const EMPTY_RESULT_MARKDOWN = "# Job Openings\n\nWe currently have no open posit
 interface Job {
   title: string;
   location: string;
-  link: string;
+  link: null;
 }
 
 function clean(text: string): string {
@@ -35,13 +35,13 @@ function main(): void {
   $("div[id^='job_item_view_main_div_']").each((_index, element) => {
     const $card = $(element);
     const title = clean($card.find("sdf-link[id^='lblTitle_']").first().text());
-    if (!title) return;
+    if (!title) throw new Error("The job listing has no title.");
 
     const location = clean($card.find(".current-opening-locations").text());
 
     // The sdf-link anchors use href="#" and no real job URL is present in the
     // snapshot, so no direct per-job link can be recovered from the DOM.
-    const link = "";
+    const link = null;
 
     jobs.push({ title, location, link });
   });
@@ -54,7 +54,7 @@ function main(): void {
       console.error("extract: ADP openings tile (#tileCurrentOpenings) not found in snapshot");
       process.exit(1);
     }
-    process.stdout.write(`${JSON.stringify({ markdown: EMPTY_RESULT_MARKDOWN, jobCount: 0 })}\n`);
+    process.stdout.write(`${JSON.stringify({ markdown: EMPTY_RESULT_MARKDOWN, jobCount: 0, jobs: [] })}\n`);
     return;
   }
 
@@ -66,7 +66,7 @@ function main(): void {
       return job.link ? `- ${job.title}${suffix}: ${job.link}` : `- ${job.title}${suffix}`;
     });
 
-  process.stdout.write(`${JSON.stringify({ markdown: `# Job Openings\n\n${lines.join("\n")}\n`, jobCount: jobs.length })}\n`);
+  process.stdout.write(`${JSON.stringify({ markdown: `# Job Openings\n\n${lines.join("\n")}\n`, jobCount: jobs.length, jobs: jobs.map(({ title, link }) => ({ title, link })) })}\n`);
 }
 
 try {

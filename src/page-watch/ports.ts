@@ -1,3 +1,5 @@
+import type { BookmarkStore } from "../bookmarks/store.ts";
+import type { ExtractedJob, JobIdentity } from "./jobs.ts";
 import type { SnapshotComparison } from "../snapshots/compare.ts";
 import type {
   CanonicalSnapshotPath,
@@ -68,6 +70,7 @@ export type SnapshotStore = Readonly<{
   capture: (url: WatchedUrl, renderSettleMs: number) => Promise<HtmlSnapshotPath>;
   extract: (snapshot: HtmlSnapshotPath) => Promise<CanonicalSnapshotPath>;
   jobCount: (snapshot: CanonicalSnapshotPath) => Promise<number>;
+  jobs: (snapshot: CanonicalSnapshotPath) => Promise<readonly ExtractedJob[]>;
   recordInspection: (snapshot: CanonicalSnapshotPath, previousJobCount: number, judgment: JudgmentResult) => Promise<void>;
   compare: (snapshotDirectory: SnapshotDirectory) => Promise<SnapshotComparison>;
   collectExpired: () => Promise<void>;
@@ -108,5 +111,7 @@ export type PageWatchDependencies = Readonly<{
     run: (task: ZeroJobInspectionTask) => Promise<JudgmentResult>;
   }>;
   notifier: Notifier;
+  jobNotifier: Readonly<{ send: (job: JobIdentity) => Promise<void> }>;
+  bookmarks: BookmarkStore;
   retryClock: RetryClock;
 }>;

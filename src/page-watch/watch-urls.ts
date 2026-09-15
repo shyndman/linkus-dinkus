@@ -14,6 +14,7 @@ import {
 import { organizationNamePath } from "./organization-name.ts";
 import type { JudgmentResult } from "./judgment.ts";
 import type { PageWatchDependencies } from "./ports.ts";
+import { deliverJobUpdates, readJobUpdate, type JobUpdate } from "./job-updates.ts";
 import type { UrlStateResult } from "./url-state.ts";
 import {
   runConcurrentPageChecks,
@@ -27,6 +28,7 @@ export type UrlWatchResult = Readonly<{
   state: "set-up" | "baseline" | "unchanged" | "changed";
   scriptAgentRan: boolean;
   judgment: JudgmentResult | null;
+  jobUpdate: JobUpdate;
 }>;
 
 export type WatchInput = Readonly<{
@@ -88,6 +90,7 @@ async function setUpUrl(
     state: "set-up",
     scriptAgentRan: true,
     judgment,
+    jobUpdate: await readJobUpdate(url, organizationName, comparison, dependencies),
   };
 }
 
@@ -245,6 +248,7 @@ async function watchConfiguredUrl(
     state: comparison.state,
     scriptAgentRan: organization.agentRan || extractorAuditRan,
     judgment,
+    jobUpdate: await readJobUpdate(url, organization.name, comparison, dependencies),
   };
 }
 async function preparePageRetry(
@@ -390,13 +394,6 @@ async function recordFailedPageCheck(
   }
 }
 
-function consolidatedJudgmentMessage(results: readonly UrlWatchResult[]): string | null {
-  const sections = results.flatMap((result: UrlWatchResult): readonly string[] => {
-    if (result.judgment?.state !== "matched") return [];
-    return [`${result.organizationName}\n${result.judgment.text}`];
-  });
-  return sections.length === 0 ? null : sections.join("\n\n");
-}
 
 export async function watchUrls(
   input: WatchInput,
@@ -427,19 +424,8 @@ export async function watchUrls(
     logger.error("page-check orchestration failed.", { error: detail });
     failures.push(detail);
   }
-  const judgmentMessage = consolidatedJudgmentMessage(results);
   const matchedPageCount = results.reduce((count, result) => count + Number(result.judgment?.state === "matched"), 0);
-  if (judgmentMessage !== null) {
-    try {
-      logger.debug("sending the consolidated change judgments.", { characters: judgmentMessage.length, matchedPageCount });
-      await dependencies.notifier.send(judgmentMessage);
-      logger.info("sent the consolidated change judgments.", { matchedPageCount, characters: judgmentMessage.length });
-    } catch (error: unknown) {
-      const detail = errorDetail(error);
-      logger.error("could not send the consolidated change judgments.", { error: detail });
-      failures.push(`consolidated change judgments: ${detail}`);
-    }
-  }
+  failures.push(...await deliverJobUpdates(results, dependencies));
   try {
     await dependencies.snapshots.collectExpired();
   } catch (error: unknown) {

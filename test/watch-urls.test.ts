@@ -31,6 +31,7 @@ import {
   urlLogTag,
 } from "../src/page-watch/concurrent-page-checks.ts";
 import type { UrlState } from "../src/page-watch/url-state.ts";
+import type { ExtractedJob, JobIdentity } from "../src/page-watch/jobs.ts";
 
 const URL = "https://example.com/jobs";
 const SNAPSHOT_DIRECTORY = "snapshots/example";
@@ -60,6 +61,8 @@ type DependencyOverrides = Readonly<{
   runJudgeAgent: (task: JudgeAgentTask) => Promise<JudgmentResult>;
   readJobCount: (snapshot: string) => Promise<number>;
   inspectZeroJobs: (task: ZeroJobInspectionTask) => Promise<JudgmentResult>;
+  readJobs: (snapshot: string) => Promise<readonly ExtractedJob[]>;
+  sendJobNotification: (job: JobIdentity) => Promise<void>;
   sendNotification: (text: string) => Promise<void>;
   recordResult: (url: string, result: "success" | "failure", detail: string | null) => Promise<void>;
   collectExpiredSnapshots: () => Promise<void>;
@@ -131,6 +134,8 @@ function makeDependencies(
       capture: async (url, renderSettleMs) => HtmlSnapshotPathSchema.parse(await capturePage(url, renderSettleMs)),
       extract: async (snapshot) => CanonicalSnapshotPathSchema.parse(await extractSnapshot(snapshot)),
       jobCount: overrides.readJobCount ?? (async () => 1),
+      jobs: overrides.readJobs ?? (async (snapshot) => snapshot === CHANGED_COMPARISON.current
+        ? [{ title: "Engineer", link: "https://example.com/jobs/engineer" }] : []),
       recordInspection: async () => {},
       compare: compareSnapshots,
       collectExpired,
@@ -149,6 +154,17 @@ function makeDependencies(
       run: overrides.inspectZeroJobs ?? (async () => { throw new Error("Unexpected zero-job inspection"); }),
     },
     notifier: { send: sendNotification },
+    jobNotifier: { send: overrides.sendJobNotification ?? (async (job) => {
+      calls.push(`send-job:${job.organizationName}:${job.title}:${job.link}`);
+    }) },
+    bookmarks: {
+      initialize: async () => {},
+      register: async () => "test",
+      save: async () => "saved",
+      observe: async () => {},
+      pendingRemovals: async () => [],
+      acknowledgeRemoval: async () => {},
+    },
     retryClock: { wait: waitForRetry },
   };
 }
@@ -278,7 +294,7 @@ test("keeps failed judgments out of accepted results and records the reason", as
   assert.ok(!calls.some(call => call.startsWith("send-notification:")));
 });
 
-test("sends one consolidated message with organization sections", async (): Promise<void> => {
+test("sends a separate message for each added job across pages", async (): Promise<void> => {
   const calls: string[] = [];
   const firstUrl = `${URL}/first`;
   const secondUrl = `${URL}/second`;
@@ -291,6 +307,14 @@ test("sends one consolidated message with organization sections", async (): Prom
       snapshotDirectory === "snapshots/first" ? "First Organization" : "Second Organization"
     ),
     compareSnapshots: async (): Promise<SnapshotComparison> => CHANGED_COMPARISON,
+    readJobs: async (snapshot) => snapshot === CHANGED_COMPARISON.current
+      ? [
+        { title: "Engineer", link: "https://example.com/jobs/engineer" },
+        { title: "Biologist", link: null },
+        { title: "Existing role", link: "https://example.com/jobs/existing" },
+        { title: "Engineer", link: "https://example.com/jobs/engineer" },
+      ]
+      : [{ title: "Existing role", link: "https://example.com/jobs/existing" }],
     runJudgeAgent: async (task): Promise<JudgmentResult> => ({
       state: "matched",
       text: task.organizationName === "First Organization" ? "Added first role." : "Added second role.",
@@ -302,9 +326,12 @@ test("sends one consolidated message with organization sections", async (): Prom
     urls: [firstUrl, secondUrl],
   }, operations);
 
-  const notificationCalls = calls.filter((call: string): boolean => call.startsWith("send-notification:"));
+  const notificationCalls = calls.filter((call: string): boolean => call.startsWith("send-job:"));
   assert.deepEqual(notificationCalls, [
-    "send-notification:First Organization\nAdded first role.\n\nSecond Organization\nAdded second role.",
+    "send-job:First Organization:Engineer:https://example.com/jobs/engineer",
+    `send-job:First Organization:Biologist:${firstUrl}`,
+    "send-job:Second Organization:Engineer:https://example.com/jobs/engineer",
+    `send-job:Second Organization:Biologist:${secondUrl}`,
   ]);
 });
 
@@ -335,7 +362,7 @@ test("sends matched judgments when another page check fails", async (): Promise<
   }, operations);
   assert.deepEqual(results.map(result => result.url), [matchedUrl]);
 
-  assert.ok(calls.includes("send-notification:Matched Organization\nAdded matched role."));
+  assert.ok(calls.includes("send-job:Matched Organization:Engineer:https://example.com/jobs/engineer"));
   assert.ok(calls.includes("record-success"));
   assert.ok(calls.includes("record-failure"));
   assert.equal(calls.at(-1), "collect-expired-snapshots");
@@ -526,6 +553,7 @@ test("limits active page checks to the configured concurrency", async (): Promis
           state: "unchanged",
           scriptAgentRan: false,
           judgment: null,
+          jobUpdate: { extractionId: CURRENT_SNAPSHOT, jobs: [], addedJobs: [] },
         },
       };
     },
@@ -556,6 +584,7 @@ test("inspects a drop to zero and reports confirmed closure even for a new-job t
   const operations = makeDependencies(calls, {
     compareSnapshots: async () => CHANGED_COMPARISON,
     readJobCount: async path => path === CHANGED_COMPARISON.current ? 0 : 4,
+    readJobs: async () => [],
     inspectZeroJobs: async task => {
       assert.equal(task.previousJobCount, 4);
       return { state: "matched", text: "The complete career section is empty." };

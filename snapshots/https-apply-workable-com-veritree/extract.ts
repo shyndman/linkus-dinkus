@@ -29,12 +29,12 @@ function main(): void {
     process.exit(1);
   }
 
-  const jobs: Array<{ title: string; link: string }> = [];
+  const jobs: Array<{ title: string; link: string | null }> = [];
   list.find('li[data-ui="job"]').each((_index, element) => {
     const title = clean($(element).find('[data-ui="job-title"] span').first().text());
     const href = $(element).find("a[href]").attr("href") ?? "";
-    if (!title) return;
-    const link = href ? new URL(href, BASE_URL).toString() : "";
+    if (!title) throw new Error("The job listing has no title.");
+    const link = href ? new URL(href, BASE_URL).toString() : null;
     jobs.push({ title, link });
   });
 
@@ -46,7 +46,7 @@ function main(): void {
           .sort((a, b) => a.title.localeCompare(b.title))
           .map((job) => (job.link ? `- ${job.title}: ${job.link}` : `- ${job.title}`))
           .join("\n")}\n`;
-  process.stdout.write(`${JSON.stringify({ markdown, jobCount: jobs.length })}\n`);
+  process.stdout.write(`${JSON.stringify({ markdown, jobCount: jobs.length, jobs })}\n`);
 }
 
 try {

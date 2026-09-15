@@ -6,7 +6,7 @@ const EMPTY_RESULT_MARKDOWN = "# Job Openings\n\nWe currently have no open posit
 
 interface Job {
   title: string;
-  link: string;
+  link: string | null;
 }
 
 function clean(text: string): string {
@@ -40,9 +40,9 @@ function main(): void {
   board.find("a[href]").each((_index, element) => {
     const title = clean($(element).text());
     const href = $(element).attr("href") ?? "";
-    if (!title) return;
+    if (!title) throw new Error("The job listing has no title.");
     if (!/bamboohr\.com/i.test(href) && !/bamboohr\.com/i.test(title)) {
-      const link = href ? new URL(href, BASE_URL).toString() : "";
+      const link = href ? new URL(href, BASE_URL).toString() : null;
       jobs.push({ title, link });
     }
   });
@@ -57,7 +57,7 @@ function main(): void {
           .sort((a, b) => a.title.localeCompare(b.title))
           .map((job) => (job.link ? `- ${job.title}: ${job.link}` : `- ${job.title}`))
           .join("\n")}\n`;
-  process.stdout.write(`${JSON.stringify({ markdown, jobCount: jobs.length })}\n`);
+  process.stdout.write(`${JSON.stringify({ markdown, jobCount: jobs.length, jobs })}\n`);
 }
 
 try {
