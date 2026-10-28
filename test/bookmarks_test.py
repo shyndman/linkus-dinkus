@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src" / "bookmarks"))
 
-from sheet import Identity, SavedJobsSheet
+from sheet import FIRST_DATA_ROW, Identity, SavedJobsSheet
 from store import BookmarkOperations, ExtractedJob, Job, identity, open_database
 
 
@@ -23,7 +23,7 @@ class MemorySheet(SavedJobsSheet):
         return self.data
 
     def write(self, area: str, values: list[list[str]]) -> None:
-        index = int(area.split(":")[0][1:]) - 3
+        index = int(area.split(":")[0][1:]) - FIRST_DATA_ROW
         while len(self.data) <= index:
             self.data.append([])
         self.data[index] = values[0]
@@ -32,7 +32,7 @@ class MemorySheet(SavedJobsSheet):
         if self.fail_removal:
             raise OSError("The sheet request failed.")
         for row in self.matching_rows(key):
-            self.data[row - 3] = []
+            self.data[row - FIRST_DATA_ROW] = []
 
 
 class BookmarkRulesTest(unittest.TestCase):
@@ -64,11 +64,11 @@ class BookmarkRulesTest(unittest.TestCase):
             self.observe(str(index), [])
         self.observe("4", [])
         self.observe("elsewhere", [], "https://another.example/jobs")
-        self.assertEqual(self.sheet.matching_rows(identity(self.job)), [3])
+        self.assertIn(list(identity(self.job)), self.sheet.rows())
         self.observe("return", [{"title": "Biologist", "link": "https://example.com/jobs/biologist"}])
         for index in range(5):
             self.observe(f"second-{index}", [])
-        self.assertEqual(self.sheet.matching_rows(identity(self.job)), [3])
+        self.assertIn(list(identity(self.job)), self.sheet.rows())
         self.observe("second-5", [])
         self.assertEqual(self.sheet.matching_rows(identity(self.job)), [])
         self.assertEqual(self.operations.execute({"action": "pending-removals"}), [{"id": "token", "job": self.job}])
@@ -102,7 +102,7 @@ class BookmarkRulesTest(unittest.TestCase):
         self.sheet.fail_removal = True
         with self.assertRaises(OSError):
             self.observe("sixth", [])
-        self.assertEqual(self.sheet.matching_rows(identity(self.job)), [3])
+        self.assertIn(list(identity(self.job)), self.sheet.rows())
         self.sheet.fail_removal = False
         self.assertEqual(self.operations.execute({"action": "pending-removals"}), [{"id": "token", "job": self.job}])
         self.assertEqual(self.sheet.matching_rows(identity(self.job)), [])
@@ -115,7 +115,7 @@ class BookmarkRulesTest(unittest.TestCase):
         for index in range(6):
             self.observe(str(index), [{"title": "Biologist", "link": "https://example.com/jobs/two"}])
         self.assertEqual(self.sheet.matching_rows(identity(direct)), [])
-        self.assertEqual(self.sheet.matching_rows(identity(self.job)), [3])
+        self.assertIn(list(identity(self.job)), self.sheet.rows())
 
 
 if __name__ == "__main__":

@@ -49,7 +49,7 @@ function requireTelegramEnvironment(name: TelegramEnvironmentName): string {
   logger.error("a required Telegram setting is missing.", { setting: name });
   throw new Error(`Missing required environment variable: ${name}`);
 }
-const linkify = new LinkifyIt();
+const linkify = new LinkifyIt({ fuzzyEmail: false });
 const COMPACT_LINK_LABEL = "link";
 
 function linkifyMessage(message: string): TelegramMessage {

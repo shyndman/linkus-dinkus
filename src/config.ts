@@ -31,7 +31,7 @@ export type ApplicationConfig = Readonly<{
 export const APPLICATION_CONFIG = {
   agents: {
     extractorMaxTimeSeconds: "900",
-    judgeMaxTimeSeconds: "900",
+    judgeMaxTimeSeconds: "90",
     scheduleMaxTimeSeconds: "60",
   },
   googleSheets: {
@@ -42,7 +42,7 @@ export const APPLICATION_CONFIG = {
     lastCheckDateTimeRange: "lastCheckDateTime",
   },
   pageChecks: {
-    concurrency: 6,
+    concurrency: 2,
     extractorAuditIntervalDays: 7,
     attemptCount: 3,
     retryDelayMs: 10_000,

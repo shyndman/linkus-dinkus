@@ -6,6 +6,8 @@ OnFailure=linkus-dinkus-failure.service
 
 [Service]
 Type=oneshot
+TimeoutStartSec=15min
+TimeoutStartFailureMode=kill
 WorkingDirectory=/opt/linkus-dinkus
 Environment=GOOGLE_SERVICE_ACCOUNT_FILE=/etc/linkus-dinkus/secrets/google-service-account.json
 Environment=XDG_CACHE_HOME=/usr/lib/linkus-dinkus/cache

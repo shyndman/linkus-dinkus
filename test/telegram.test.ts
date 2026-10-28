@@ -157,3 +157,28 @@ test("bolds the organization and links only the label beside the job title", asy
     }
   }
 });
+
+test("preserves systemd paths instead of sending invalid email links to the admin", async (): Promise<void> => {
+  const previousEnvironment = Object.fromEntries(ENVIRONMENT_NAMES.map(name => [name, process.env[name]]));
+  type Message = Parameters<Bot["api"]["sendMessage"]>[0];
+  const messages: Message[] = [];
+  class CapturingBot {
+    readonly api = {
+      sendMessage: async (message: Message): Promise<void> => { messages.push(message); },
+    };
+  }
+  const diagnostic = "CGroup: /user.slice/user-1000.slice/user@1000.service/app.slice/linkus-dinkus.service";
+  try {
+    process.env.TELEGRAM_BOT_TOKEN = "test-token";
+    process.env.TELEGRAM_CHAT_ID = "admin-chat";
+    await createAdminTelegramNotifier(CapturingBot)(diagnostic);
+    assert.equal(messages[0]?.text, diagnostic);
+    assert.deepEqual(messages[0]?.entities, []);
+  } finally {
+    for (const name of ENVIRONMENT_NAMES) {
+      const previous = previousEnvironment[name];
+      if (previous === undefined) delete process.env[name];
+      else process.env[name] = previous;
+    }
+  }
+});

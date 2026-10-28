@@ -24,7 +24,7 @@ class Values(TypedDict):
 
 
 Identity = tuple[str, str, str]
-FIRST_DATA_ROW = 3
+FIRST_DATA_ROW = 4
 HEADERS = ["Organization", "Job title", "Link"]
 
 
@@ -52,15 +52,15 @@ class SavedJobsSheet:
         ).execute()
 
     def initialize(self) -> None:
-        existing = self.read("G1:I2")
+        existing = self.read("H2:J3")
         expected = [["Saved jobs"], HEADERS]
         if existing and existing != expected:
             raise ValueError("The saved-job header area contains other data.")
         if not existing:
-            self.write("G1:I2", expected)
+            self.write("H2:J3", expected)
 
     def rows(self) -> list[list[str]]:
-        return self.read("G3:I")
+        return self.read("H4:J")
 
     def matching_rows(self, identity: Identity) -> list[int]:
         return [index + FIRST_DATA_ROW for index, row in enumerate(self.rows()) if tuple(row) == identity]
@@ -72,11 +72,11 @@ class SavedJobsSheet:
             return False
         index = next((index for index, row in enumerate(rows) if not any(row)), len(rows))
         row_number = FIRST_DATA_ROW + index
-        self.write(f"G{row_number}:I{row_number}", [list(identity)])
+        self.write(f"H{row_number}:J{row_number}", [list(identity)])
         return True
 
     def remove(self, identity: Identity) -> None:
-        ranges = [f"{self.prefix}G{row}:I{row}" for row in self.matching_rows(identity)]
+        ranges = [f"{self.prefix}H{row}:J{row}" for row in self.matching_rows(identity)]
         if ranges:
             self.client.spreadsheets.values().batchClear(
                 spreadsheetId=self.spreadsheet_id, body={"ranges": ranges},

@@ -39,6 +39,7 @@ export type WatchInput = Readonly<{
 type PageCheckProgress = { attempts: number };
 const PAGE_SUMMARY_MESSAGE = "━━ Page complete ━━";
 const POLL_SUMMARY_MESSAGE = "━━ Poll complete ━━";
+const MILLISECONDS_PER_SECOND = 1_000;
 
 async function setUpUrl(
   url: WatchedUrl,
@@ -266,10 +267,10 @@ async function preparePageRetry(
     await dependencies.snapshots.discardAttempt(currentSnapshot);
   }
   if (attempt >= APPLICATION_CONFIG.pageChecks.attemptCount) throw error;
-  logger.warn("retrying the page after failed-attempt cleanup.", {
+  logger.warn("Waiting to try again", {
     attempt,
     attemptCount: APPLICATION_CONFIG.pageChecks.attemptCount,
-    retryDelayMs: APPLICATION_CONFIG.pageChecks.retryDelayMs,
+    delay: `${APPLICATION_CONFIG.pageChecks.retryDelayMs / MILLISECONDS_PER_SECOND}s`,
   });
   await dependencies.retryClock.wait(APPLICATION_CONFIG.pageChecks.retryDelayMs);
 }
