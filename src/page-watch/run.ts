@@ -2,7 +2,7 @@ import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { Client } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { getDefaultEnvironment, StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { z } from "zod";
 import { APPLICATION_CONFIG } from "../config.ts";
 import { errorDetail, logger } from "../logger.ts";
@@ -452,8 +452,14 @@ function createGoogleSheetsConfigurationSource(
 export async function runPageWatch(): Promise<void> {
   logger.info("starting the page-watch application.");
   const mcpServer = readMcpServerConfiguration();
+  const serverEnvironment = getDefaultEnvironment();
+  const credentialFile = process.env.GOOGLE_SERVICE_ACCOUNT_FILE;
+  if (credentialFile !== undefined) serverEnvironment.GOOGLE_SERVICE_ACCOUNT_FILE = credentialFile;
+
   const client = new Client({ name: "linkus-dinkus", version: "1.0.0" });
-  const transport = new StdioClientTransport({ command: mcpServer.command, args: [...mcpServer.args] });
+  const transport = new StdioClientTransport({
+    command: mcpServer.command, args: [...mcpServer.args], env: serverEnvironment,
+  });
   logger.debug("connecting to Google Sheets.");
   try {
     await client.connect(transport);

@@ -27,6 +27,7 @@ LLM_PROVIDER_MODEL_PROVIDER=replace-with-model-provider
 LLM_PROVIDER_MODEL_ID=replace-with-model-id
 TELEGRAM_BOT_TOKEN=replace-with-bot-token
 TELEGRAM_CHAT_ID=replace-with-chat-id
+TELEGRAM_PAGE_CHANGE_CHAT_ID=replace-with-page-change-chat-id
 GOOGLE_SERVICE_ACCOUNT_PATH=/etc/linkus-dinkus/google-service-account.json
 # Optional: pin an immutable GitHub-built image rather than latest.
 # LINKUS_IMAGE=ghcr.io/shyndman/linkus-dinkus:sha-FULL_COMMIT_SHA

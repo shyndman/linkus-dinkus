@@ -1,10 +1,10 @@
 import { rename, writeFile } from "node:fs/promises";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
-import { errorDetail, logger } from "../../src/logger.ts";
 import {
   JUDGMENT_RESULT_PATH_ENVIRONMENT_VARIABLE,
   JudgmentResultSchema,
 } from "../../src/page-watch/judgment.ts";
+
 
 export default function submitJudgmentExtension(pi: ExtensionAPI): void {
   const z = pi.zod;
@@ -26,7 +26,7 @@ export default function submitJudgmentExtension(pi: ExtensionAPI): void {
       const judgment = JudgmentResultSchema.parse(params);
       const resultPath = process.env[JUDGMENT_RESULT_PATH_ENVIRONMENT_VARIABLE];
       if (resultPath === undefined) {
-        logger.error("the judgment result path is missing.");
+        console.error("the judgment result path is missing.");
         throw new Error(`Missing required environment variable: ${JUDGMENT_RESULT_PATH_ENVIRONMENT_VARIABLE}`);
       }
 
@@ -35,8 +35,8 @@ export default function submitJudgmentExtension(pi: ExtensionAPI): void {
         await writeFile(temporaryPath, `${JSON.stringify(judgment)}\n`, { encoding: "utf8", flag: "wx" });
         await rename(temporaryPath, resultPath);
       } catch (error: unknown) {
-        const detail = errorDetail(error);
-        logger.error("could not save the judgment result.", { error: detail });
+        const detail = error instanceof Error ? error.message : String(error);
+        console.error("could not save the judgment result.", { error: detail });
         throw new Error(`Could not save the judgment result: ${detail}`);
       }
 

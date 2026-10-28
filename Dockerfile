@@ -65,7 +65,7 @@ RUN apt-get update \
 
 RUN corepack enable pnpm \
     && corepack prepare pnpm@11.24.0 --activate \
-    && npm install --global --omit=dev @oh-my-pi/pi-coding-agent@18.1.4
+    && npm install --global --omit=dev @oh-my-pi/pi-coding-agent
 
 RUN userdel ubuntu \
     && useradd \
@@ -84,7 +84,7 @@ WORKDIR /opt/linkus-dinkus
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile --prod
 
-COPY AGENTS.md tsconfig.json ./
+COPY AGENTS.md omp.yml tsconfig.json ./
 COPY .omp/mcp.container.json .omp/mcp.json
 COPY .omp/extensions/ .omp/extensions/
 COPY bin/ bin/
@@ -99,6 +99,7 @@ RUN git clone https://github.com/shyndman/spreadsheet-mcp.git .tools/spreadsheet
     && git -C .tools/camoufox-cli checkout --detach FETCH_HEAD \
     && uv sync --directory .tools/camoufox-cli --no-dev \
     && .tools/camoufox-cli/.venv/bin/camou install \
+    && .tools/camoufox-cli/.venv/bin/camoufox fetch \
     && rm --recursive --force .tools/spreadsheet-mcp/.git .tools/camoufox-cli/.git \
     && ln --symbolic /var/lib/linkus-dinkus snapshots \
     && chmod --recursive a-w /opt/linkus-dinkus \
