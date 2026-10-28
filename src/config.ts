@@ -1,6 +1,5 @@
 export type ApplicationConfig = Readonly<{
   agents: Readonly<{
-    model: "openrouter/deepseek/deepseek-v4.1-flash";
     extractorMaxTimeSeconds: string;
     judgeMaxTimeSeconds: string;
     scheduleMaxTimeSeconds: string;
@@ -31,7 +30,6 @@ export type ApplicationConfig = Readonly<{
 
 export const APPLICATION_CONFIG = {
   agents: {
-    model: "openrouter/deepseek/deepseek-v4.1-flash",
     extractorMaxTimeSeconds: "900",
     judgeMaxTimeSeconds: "900",
     scheduleMaxTimeSeconds: "60",

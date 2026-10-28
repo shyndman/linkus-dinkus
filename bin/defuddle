@@ -2,4 +2,5 @@
 set -eu
 
 project_directory=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+. "$project_directory/bin/runtime-env"
 exec "$project_directory/node_modules/.bin/defuddle" "$@"

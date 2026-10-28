@@ -6,7 +6,7 @@ FROM ghcr.io/astral-sh/uv:0.11.16 AS uv
 
 FROM ubuntu:26.04
 
-ARG CAMOUFOX_BUILD_REVISION=local
+ARG CAMOUFOX_REVISION=c095fb9ab6dfae9ffc74e67a866bc4f874242606
 ARG SPREADSHEET_MCP_REVISION=598f4f53febe8ff4466b2babb582eaa9ef803745
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -93,16 +93,19 @@ COPY src/ src/
 RUN git clone https://github.com/shyndman/spreadsheet-mcp.git .tools/spreadsheet-mcp \
     && git -C .tools/spreadsheet-mcp checkout "${SPREADSHEET_MCP_REVISION}" \
     && uv sync --directory .tools/spreadsheet-mcp --frozen --no-dev \
-    && printf '%s\n' "${CAMOUFOX_BUILD_REVISION}" > /tmp/camoufox-build-revision \
-    && git clone --depth=1 https://github.com/shyndman/camoufox-cli.git .tools/camoufox-cli \
+    && git init .tools/camoufox-cli \
+    && git -C .tools/camoufox-cli remote add origin https://github.com/shyndman/camoufox-cli.git \
+    && git -C .tools/camoufox-cli fetch --depth=1 origin "${CAMOUFOX_REVISION}" \
+    && git -C .tools/camoufox-cli checkout --detach FETCH_HEAD \
     && uv sync --directory .tools/camoufox-cli --no-dev \
     && .tools/camoufox-cli/.venv/bin/camou install \
-    && rm --recursive --force .tools/spreadsheet-mcp/.git .tools/camoufox-cli/.git /tmp/camoufox-build-revision \
+    && rm --recursive --force .tools/spreadsheet-mcp/.git .tools/camoufox-cli/.git \
     && ln --symbolic /var/lib/linkus-dinkus snapshots \
     && chmod --recursive a-w /opt/linkus-dinkus \
     && chown --recursive linkus-dinkus:linkus-dinkus /usr/lib/linkus-dinkus/cache
 
 ENV HOME=/var/lib/linkus-dinkus
+ENV container=docker
 
 COPY systemd/linkus-dinkus.service systemd/linkus-dinkus-failure.service systemd/linkus-dinkus-bootstrap.service systemd/linkus-dinkus-bookmarks.service /usr/lib/systemd/user/
 COPY systemd/linkus-dinkus-user-environment.conf /etc/systemd/system/user@1000.service.d/linkus-dinkus-environment.conf

@@ -5,6 +5,8 @@ import type { Readable } from "node:stream";
 import { logger, SITE_LOG_TAG_ENVIRONMENT_VARIABLE } from "../logger.ts";
 import { fail, PROJECT_ROOT } from "../runtime.ts";
 
+const CONFIGURED_AGENT_RUNNER = new URL("./run-agent.ts", import.meta.url);
+
 const OUTPUT_INDENT = "  ";
 const OUTPUT_COLOR = "\u001b[38;2;180;180;180m";
 const RESET_COLOR = "\u001b[0m";
@@ -24,10 +26,10 @@ async function forwardOutput(input: Readable): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  const ompArguments: readonly string[] = process.argv.slice(2);
-  if (ompArguments.length === 0) throw new Error("The styled OMP runner requires OMP arguments.");
+  const agentArguments: readonly string[] = process.argv.slice(2);
+  if (agentArguments.length === 0) throw new Error("The styled agent runner requires arguments.");
 
-  const child = spawn("omp", ompArguments, {
+  const child = spawn(process.execPath, ["--import", "tsx", CONFIGURED_AGENT_RUNNER.pathname, "omp", ...agentArguments], {
     cwd: PROJECT_ROOT,
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -38,7 +40,7 @@ async function main(): Promise<void> {
     close,
   ]);
   if (status !== 0) {
-    logger.error("OMP process failed.", { status, signal });
+    logger.error("agent process failed.", { status, signal });
     process.exitCode = status ?? 1;
   }
 }

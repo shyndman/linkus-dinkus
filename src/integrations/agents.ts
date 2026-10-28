@@ -156,7 +156,6 @@ async function runOmpAgent(
 ): Promise<void> {
   const startedAt = performance.now();
   logger.debug("starting an agent.", {
-    model: APPLICATION_CONFIG.agents.model,
     timeLimitSeconds: Number(maxTime),
   });
   await new Promise<void>((resolveAgent, rejectAgent): void => {
@@ -164,7 +163,6 @@ async function runOmpAgent(
       "--import",
       "tsx",
       STYLED_OMP_RUNNER_PATH,
-      "--model", APPLICATION_CONFIG.agents.model,
       `--thinking=${thinking}`,
       `--max-time=${maxTime}`,
       "--print",

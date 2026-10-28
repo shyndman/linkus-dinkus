@@ -1,0 +1,33 @@
+services:
+  linkus:
+    image: ${LINKUS_IMAGE:-ghcr.io/shyndman/linkus-dinkus:latest}
+    platform: linux/amd64
+    restart: unless-stopped
+    # The existing scheduler runs systemd as PID 1 and a lingering user manager.
+    privileged: true
+    cgroup: host
+    environment:
+      LLM_PROVIDER_URL: ${LLM_PROVIDER_URL:?Set LLM_PROVIDER_URL to the gateway root URL}
+      LLM_PROVIDER_API_TOKEN: ${LLM_PROVIDER_API_TOKEN:?Set LLM_PROVIDER_API_TOKEN}
+      LLM_PROVIDER_MODEL_ID: ${LLM_PROVIDER_MODEL_ID:?Set LLM_PROVIDER_MODEL_ID}
+      LLM_PROVIDER_MODEL_PROVIDER: ${LLM_PROVIDER_MODEL_PROVIDER:?Set LLM_PROVIDER_MODEL_PROVIDER}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?Set TELEGRAM_BOT_TOKEN}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:?Set TELEGRAM_CHAT_ID}
+    volumes:
+      - state:/var/lib/linkus-dinkus
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+      - type: bind
+        source: ${GOOGLE_SERVICE_ACCOUNT_PATH:?Set GOOGLE_SERVICE_ACCOUNT_PATH to an absolute JSON file path}
+        target: /etc/linkus-dinkus/secrets/google-service-account.json
+        read_only: true
+        bind:
+          create_host_path: false
+    tmpfs:
+      - /run
+      - /run/lock
+      - /tmp
+    shm_size: 1gb
+    stop_grace_period: 2m
+
+volumes:
+  state:

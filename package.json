@@ -4,10 +4,10 @@
   "type": "module",
   "packageManager": "pnpm@11.24.0",
   "dependencies": {
+    "@ai-sdk/openai-compatible": "3.0.80",
     "@modelcontextprotocol/client": "2.0.0",
-    "@openrouter/ai-sdk-provider": "3.0.0",
     "@sindresorhus/slugify": "3.0.1",
-    "ai": "7.0.93",
+    "ai": "7.0.155",
     "cheerio": "1.2.0",
     "defuddle": "0.19.3",
     "dotenv": "17.4.2",

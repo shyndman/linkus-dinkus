@@ -1,4 +1,4 @@
 # The Model
 
-This application uses openrouter/deepseek/deepseek-v4.1-flash. Under no circumstances are you to use anything other than that, without asking permission first.
+All application LLM calls use `LLM_PROVIDER_URL`, `LLM_PROVIDER_API_TOKEN`, `LLM_PROVIDER_MODEL_PROVIDER`, and `LLM_PROVIDER_MODEL_ID`. The URL is the gateway root, such as `https://host/`. Direct AI SDK calls use its `/v1` API; agent calls use `pi-native` transport with the provider's client catalog metadata.
 

@@ -23,6 +23,7 @@ const MCP_CONFIG_PATH = resolve(PROJECT_ROOT, ".omp", "mcp.json");
 const POLL_FREQUENCY_INPUT_PATH = resolve(PROJECT_ROOT, "snapshots", "poll-frequency-input.txt");
 const SYSTEMD_TIME_REFERENCE_PATH = resolve(PROJECT_ROOT, "src", "resources", "systemd.time.md");
 const DATE_FORMAT = "+%b %-d, %-I:%M %p";
+const CONFIGURED_AGENT_RUNNER = resolve(PROJECT_ROOT, "src", "integrations", "run-agent.ts");
 
 
 
@@ -262,7 +263,9 @@ function readCachedPollFrequency(): string | null {
 function runOmp(arguments_: readonly string[]): string {
   const startedAt = performance.now();
   logger.debug("starting the schedule model.");
-  const result: SpawnSyncReturns<string> = spawnSync("omp", arguments_, {
+  const result: SpawnSyncReturns<string> = spawnSync(process.execPath, [
+    "--import", "tsx", CONFIGURED_AGENT_RUNNER, "omp", ...arguments_,
+  ], {
     cwd: PROJECT_ROOT,
     encoding: "utf8",
   });
@@ -347,7 +350,6 @@ function getCalendarExpressions(pollFrequency: string, validationError: string |
     readSystemdTimeDocumentation(),
   );
   const output = runOmp([
-    "--model", APPLICATION_CONFIG.agents.model,
     "--thinking=off",
     `--max-time=${APPLICATION_CONFIG.agents.scheduleMaxTimeSeconds}`,
     "--print",
